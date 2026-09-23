@@ -88,6 +88,11 @@ t('API identity: bad tokens are refused, never downgraded; editor actions need a
         assert.strictEqual(ready.status, 200);
         assert.strictEqual(ready.json.ready, true);
         assert.strictEqual((await req(h, 'GET', '/api/health')).json.service, 'openvibe-reviews');
+        // The release manifest (registry.release-manifest@1) names where open tabs report updates.
+        const rel = await req(h, 'GET', '/release.json');
+        assert.strictEqual(rel.json.service, 'reviews');
+        assert.deepStrictEqual(require('openvibe-contracts').validate('registry.release-manifest@1', rel.json).errors, []);
+        assert.strictEqual(rel.json.metrics_url, '/release-metrics');
         const nf = await req(h, 'GET', '/api/v1/nope');
         assert.strictEqual(nf.status, 404);
         assert.match(nf.headers.get('content-type'), /problem\+json/);

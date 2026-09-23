@@ -31,10 +31,14 @@ function userToken({ subject: sub = READER, username = 'someone', role = 'user',
 const editorToken = () => userToken({ subject: EDITOR, username: 'editor' });
 const readerToken = () => userToken({ subject: READER, username: 'reader' });
 
-/** A principal token: svc:<client> by default; `sub` + `actorType` for an app:/mod: principal, `extra` for on_behalf_of, env… */
+/**
+ * A principal token: svc:<client> by default; `sub` + `actorType` for an app:/mod: principal, `extra` for on_behalf_of, env…
+ * An app token carries its developer project and env, as Network's do (identity.service-token-claims 1.2.0).
+ */
 function serviceToken({ client = 'ai', cap = [], aud = 'openvibe.reviews', exp = 300, sub, actorType = 'service', extra = {} } = {}) {
     const now = Math.floor(Date.now() / 1000);
-    return serviceAuth.signServiceToken({ iss: ISSUER, sub: sub || `svc:${client}`, actor_type: actorType, aud: [aud], cap, ns: [], iat: now, exp: now + exp, jti: `tok_${crypto.randomBytes(8).toString('hex')}`, ...extra }, privateKey);
+    const app = actorType === 'app' ? { project_id: 'prj_01J8ZQ4Y7N3M2K1H0G9F8E7D6C', env: 'production' } : {};
+    return serviceAuth.signServiceToken({ iss: ISSUER, sub: sub || `svc:${client}`, actor_type: actorType, aud: [aud], cap, ns: [], iat: now, exp: now + exp, jti: `tok_${crypto.randomBytes(8).toString('hex')}`, ...app, ...extra }, privateKey);
 }
 
 const quiet = { log() {}, warn() {}, error() {} };

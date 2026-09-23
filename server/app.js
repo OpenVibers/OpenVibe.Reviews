@@ -78,7 +78,8 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
     app.use('/internal', http.middleware(), consumer.router);
 
     app.get('/api/health', (_req, res) => res.json({ status: 'ok', service: 'openvibe-reviews', version: VERSION }));
-    app.get('/release.json', release.handler);
+    // GET /release.json (ADR-016) and POST /release-metrics: open tabs' update reports into /metrics.
+    release.mount(app, { registry: metrics.registry });
     const ready = createReadiness({
         service: 'reviews', release: release.release,
         checks: [
