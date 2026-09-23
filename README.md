@@ -91,7 +91,8 @@ revision (citations moved to replacements, unsupported points dropped) waits for
 
 **Corrections.** Signed-in people send corrections (entity, alias, signal, summary, aggregate, optional
 evidence URL) from the entity page or `reviews.correction.submit`; editors accept or reject them on the
-desk. What a request says and who sent it are never published. A correction of a published summary is
+desk. What a request says and who sent it are never published; one person sends at most 20 a day and
+the same open request once (plus a per-address limit). A correction of a published summary is
 a new immutable summary revision carrying a public correction note (who: the editor who wrote it; when:
 its time), approved by that editor and published at once: accepting a request about an entity whose
 summary is published needs that note (the text is carried forward unless the editor changes it, from
@@ -140,6 +141,8 @@ secret, Community and editors reported), `/release.json`, `/metrics` (outbox and
 People use their Network JWT; services use a client-credentials token for audience
 `openvibe.reviews` and act for the person in `X-OV-Subject`. One capability per route; editorial
 writes need an editor who is a person (staff or `REVIEWS_EDITORS`). Errors are RFC 9457 problem+json.
+A write carried by the `ov_token` cookie that another site started is 403 `request.cross_site`
+(Bearer tokens are not affected).
 
 | Capability | Routes |
 |---|---|
@@ -204,6 +207,7 @@ by editors; signals arrive only from Sources.
 - a withdrawn cited signal flags the summary and prepares a pending revision that only a person can publish (`summaries.test.js`)
 - **a correction yields a public revision**: accepting a request (or an editor correcting on their own) creates a new immutable revision with the correction note, the page shows the corrected text and the revision history with the note without JavaScript, the old revision stays readable, Search/JSON-LD/feeds/events follow it, the request's text and sender never reach a public surface, a rejection creates nothing, and only an editor who is a person decides (`corrections.test.js`)
 - deterministic resolution; a name alone never resolves; permissions and capabilities enforced (`resolution.test.js`)
+- the threat review's fixes: cross-site writes refused on pages and on the cookie-authenticated API, the correction queue's per-person allowance, bounded audit text, editor ids hidden from readers, ratings in words refused in AI text, out-of-scale source ratings not counted (`threat.test.js`; see [docs/threat-review.md](docs/threat-review.md))
 - every event validates as `events.event-envelope@1` and every index document as `search.index-document@1`; proposals validate against the contracts schemas; nothing seeded (`signals.test.js`, `proposals.test.js`)
 
 Not yet demonstrated: a run against the deployed Sources with a real, enabled review source (none is
@@ -221,7 +225,7 @@ following hold (plan §12.12):
 3. server-rendered public routes useful without JavaScript — **built**;
 4. real persistence and end-to-end workflows — **built** and deployed on the host (loopback only, empty database); no Sources review source is enabled yet;
 5. capability and event registration against OpenVibe.Contracts — **done** (openvibe-contracts v0.20.0);
-6. a migration/seed strategy (none: nothing to migrate, nothing seeded), a security/threat review, sitemap/robots/feed behaviour — discovery **built**; no written security/threat review exists yet;
+6. a migration/seed strategy (none: nothing to migrate, nothing seeded), a security/threat review, sitemap/robots/feed behaviour — discovery **built**; threat review **written**: [docs/threat-review.md](docs/threat-review.md) (the service authors' own, from the code: controls with file:line references, the gaps fixed in that pass and the ones that remain; an independent review is still to come);
 7. acceptance tests proving the advertised functionality — **built** (`npm test`).
 
 The launch release removes `openvibe.reviews` from `OpenVibe.Sites/sites.json`, switches routing to
