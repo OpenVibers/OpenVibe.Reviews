@@ -148,6 +148,53 @@ t('human summaries cite signals for every point; a withdrawn cited signal flags 
     } finally { await h.stop(); }
 });
 
+t('readers never see an unreviewed AI draft, an unpublished summary, or a deleted entity through the revision history', async () => {
+    const h = await boot();
+    try {
+        const { e, pos, neg } = await setup(h);
+        const secret = 'Unreviewed model text that no person approved';
+        const p = await req(h, 'POST', `/api/v1/entities/${e.slug}/summary/proposals`, { token: AI(), body: { overview: secret, overview_signals: pos, pros: [{ text: secret, signals: pos }], workflow: WF } });
+        assert.strictEqual(p.status, 201, p.text);
+        // An editor writes and publishes their own revision instead of reviewing the AI draft.
+        const w = await req(h, 'POST', `/api/v1/entities/${e.slug}/summary/revisions`, { token: editorToken(), body: {
+            overview: 'Most sampled Steam reviewers recommend it.', overview_signals: pos, cons: [{ text: 'One does not', signals: neg }], publish: true,
+        } });
+        assert.strictEqual(w.status, 201, w.text);
+        assert.strictEqual(w.json.revision.number, 2);
+
+        for (const path of [`/e/${e.slug}/summary/1`, `/api/v1/entities/${e.slug}/summary/revisions/1`]) {
+            const r = await req(h, 'GET', path);
+            assert.strictEqual(r.status, 404, `${path} shows the never-reviewed AI draft`);
+            assert.ok(!r.text.includes(secret), path);
+        }
+        for (const path of [`/e/${e.slug}/history`, `/api/v1/entities/${e.slug}/history`]) {
+            const r = await req(h, 'GET', path);
+            assert.ok(!r.text.includes(secret), `${path} lists the never-reviewed AI draft`);
+        }
+        // Editors still see it.
+        assert.strictEqual((await req(h, 'GET', `/api/v1/entities/${e.slug}/summary/revisions/1`, { token: editorToken() })).status, 200);
+
+        // Unpublishing takes the summary down everywhere, including its revision pages.
+        const un = await req(h, 'POST', `/api/v1/entities/${e.slug}/summary/unpublish`, { token: editorToken() });
+        assert.strictEqual(un.status, 200, un.text);
+        for (const path of [`/e/${e.slug}/summary/2`, `/api/v1/entities/${e.slug}/summary/revisions/2`]) {
+            assert.strictEqual((await req(h, 'GET', path)).status, 404, `${path} still serves the unpublished summary`);
+        }
+        const hist = await req(h, 'GET', `/api/v1/entities/${e.slug}/history`);
+        assert.strictEqual(hist.json.summary_revisions.length, 0, 'history still lists the unpublished summary');
+
+        // A deleted entity answers 410 on its pages, and the API does not serve its history either.
+        const gone = await createEntity(h, { name: 'Removed On Request', kind: 'other', aliases: [{ type: 'url', value: 'https://example.org/private-person' }] });
+        const del = await req(h, 'DELETE', `/api/v1/entities/${gone.slug}`, { token: editorToken(), body: { note: 'legal request' } });
+        assert.strictEqual(del.status, 200, del.text);
+        assert.strictEqual((await req(h, 'GET', `/e/${gone.slug}/history`)).status, 410);
+        const api = await req(h, 'GET', `/api/v1/entities/${gone.id}/history`);
+        assert.strictEqual(api.status, 410, 'the API serves a deleted entity\'s history');
+        assert.ok(!api.text.includes('legal request'));
+        assert.strictEqual((await req(h, 'GET', `/api/v1/entities/${gone.id}/history`, { token: editorToken() })).status, 200);
+    } finally { await h.stop(); }
+});
+
 t('corrections from people queue for editors', async () => {
     const h = await boot();
     try {

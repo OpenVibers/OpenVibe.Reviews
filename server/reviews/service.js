@@ -343,6 +343,18 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         return 'draft';
     }
 
+    /**
+     * What a reader may see of a summary's history: revisions up to the published one while the
+     * summary is published, never a rejected revision or an AI draft no person approved.
+     */
+    function publicRevision(summary, rev) {
+        if (!summary || summary.state !== 'published' || !summary.published_revision || rev.number > summary.published_revision) return false;
+        const review = reviews.latest(summary.id, rev.number);
+        if (review && review.decision === 'rejected') return false;
+        const rec = rev.meta && rev.meta.authorship;
+        return !(rec && !authorship.canPublish(rec, review).ok);
+    }
+
     function pendingRevisions(summary) {
         const head = revisions.headNumber(summary.id);
         const out = [];
@@ -886,12 +898,13 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
 
         history(e, actor) {
             const editor = access.isEditor(actor);
+            if (e.state === 'deleted' && !editor) fail(410, 'entity.deleted', 'This entity was deleted');
             const summary = q.summary.get(e.id);
             const revs = summary ? revisions.list(summary.id, { limit: 200 }) : [];
             return {
                 entity: entityView(e),
                 aggregates: q.aggregates.all(e.id, 200).map(aggregateView),
-                summary_revisions: summary ? revs.filter((r) => editor || (summary.published_revision && r.number <= summary.published_revision && revisionStatus(summary, r) !== 'rejected'))
+                summary_revisions: summary ? revs.filter((r) => editor || publicRevision(summary, r))
                     .map((r) => summaryRevisionView(summary, r, e.id)) : [],
                 merges: q.mergeLinksOf.all(e.id, e.id).map((l) => ({
                     id: l.id, from: entityView(q.entity.get(l.from_entity)), to: entityView(q.entity.get(l.to_entity)), note: l.note,
@@ -906,11 +919,12 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         },
 
         summaryRevision(e, n, actor) {
+            if (e.state === 'deleted' && !access.isEditor(actor)) fail(410, 'entity.deleted', 'This entity was deleted');
             const summary = q.summary.get(e.id);
             if (!summary) fail(404, 'summary.not_found', 'This entity has no summary');
             const rev = revisions.get(summary.id, Number(n));
             if (!rev) fail(404, 'revision.not_found', `No revision ${n}`);
-            const visible = access.isEditor(actor) || (summary.published_revision && rev.number <= summary.published_revision && revisionStatus(summary, rev) !== 'rejected');
+            const visible = access.isEditor(actor) || publicRevision(summary, rev);
             if (!visible) fail(404, 'revision.not_found', `No revision ${n}`);
             return summaryRevisionView(summary, rev, e.id);
         },
