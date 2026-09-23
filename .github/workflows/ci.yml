@@ -17,4 +17,3 @@ jobs:
       # The reviews.* capabilities and the reviews service manifest are proposals (docs/) until the
       # lead releases them in OpenVibe.Contracts; until then this check is expected to fail.
       - run: npx openvibe-contracts-check --service reviews --src server
-        continue-on-error: true
