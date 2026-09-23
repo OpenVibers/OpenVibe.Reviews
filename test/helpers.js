@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { serviceAuth, ids } = require('openvibe-contracts');
-const { signDelivery } = require('openvibe-sdk/events');
+const { signDelivery, signDeliveryHeaders } = require('openvibe-sdk/events');
 const { load } = require('../server/config');
 const { start } = require('../server/index');
 
@@ -209,10 +209,14 @@ async function createEntity(h, body) {
     return r.json.entity;
 }
 
-/** A signed delivery from OpenVibe.Events to POST /internal/events. */
-async function deliver(h, envelope, { secret = WEBHOOK_SECRET } = {}) {
+/**
+ * A signed delivery from OpenVibe.Events to POST /internal/events (v1 and v2 headers, as Events
+ * sends it). `v1Only` sends only X-OpenVibe-Signature; `now` (ms) backdates the v2 timestamp.
+ */
+async function deliver(h, envelope, { secret = WEBHOOK_SECRET, v1Only = false, now } = {}) {
     const raw = JSON.stringify({ event: envelope, seq: 1 });
-    return req(h, 'POST', '/internal/events', { body: raw, headers: { 'X-OpenVibe-Signature': signDelivery(raw, secret) } });
+    const headers = v1Only ? { 'X-OpenVibe-Signature': signDelivery(raw, secret) } : signDeliveryHeaders(raw, secret, { now });
+    return req(h, 'POST', '/internal/events', { body: raw, headers });
 }
 
 function sourcesEvent(type, item, extra = {}) {

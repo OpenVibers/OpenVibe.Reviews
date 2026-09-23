@@ -194,7 +194,7 @@ t('every produced event is a valid events.event-envelope@1', async () => {
     } finally { await h.stop(); }
 });
 
-t('import needs the capability; a bad webhook signature is refused', async () => {
+t('import needs the capability; a bad, v1-only or stale webhook signature is refused', async () => {
     const h = await boot();
     try {
         const it = h.sources.put(steamItem());
@@ -203,6 +203,10 @@ t('import needs the capability; a bad webhook signature is refused', async () =>
         assert.strictEqual(denied.json.code, 'capability.denied');
         const bad = await deliver(h, sourcesEvent('sources.item.created', it), { secret: 'wrong' });
         assert.strictEqual(bad.status, 401);
+        const v1only = await deliver(h, sourcesEvent('sources.item.created', it), { v1Only: true });
+        assert.strictEqual(v1only.status, 401, 'v1 only (no v2 header): refused');
+        const stale = await deliver(h, sourcesEvent('sources.item.created', it), { now: Date.now() - 301000 });
+        assert.strictEqual(stale.status, 401, 'stale v2 (outside the 300 s window): refused');
         const other = await deliver(h, { ...sourcesEvent('sources.item.created', it), source: 'news' });
         assert.strictEqual(other.json.outcome, 'ignored:source');
     } finally { await h.stop(); }
