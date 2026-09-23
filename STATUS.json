@@ -7,13 +7,14 @@
   "runtime": "node 22, express, better-sqlite3",
   "port": 4830,
   "domain": "openvibe.reviews",
-  "contracts": "openvibe-contracts v0.19.0",
-  "packages": ["openvibe-publishing v0.2.0", "openvibe-shared v1.3.0", "openvibe-sdk v0.2.2"],
+  "contracts": "openvibe-contracts v0.20.0",
+  "packages": ["openvibe-publishing v0.2.1", "openvibe-shared v1.3.0", "openvibe-sdk v0.4.0"],
   "capabilities": ["reviews.entity.resolve", "reviews.entity.manage", "reviews.entity.merge", "reviews.entity.split", "reviews.signal.import", "reviews.summary.propose", "reviews.summary.publish", "reviews.correction.submit"],
-  "capabilitiesRegistered": false,
-  "deployed": false,
+  "capabilitiesRegistered": true,
+  "deployed": true,
+  "deployment": "openvibe-ovh, unit openvibe-reviews, 127.0.0.1:4830 loopback only (release 3151c05); /api/ready 200; Events subscription sources.item.* in place; production database holds 0 entities and 0 signals. Deployed internally, not launched: openvibe.reviews still serves the OpenVibe.Sites placeholder until a person verifies a review source's terms and enables it in Sources, and an editor publishes (REVIEWS_EDITORS holds the owner only)",
   "onOpenVibeSites": true,
   "seed": "none: no entities, signals, summaries or ratings are seeded",
-  "dataSource": "OpenVibe.Sources category reviews; no review source is enabled there yet",
-  "updated": "2026-09-22"
+  "dataSource": "OpenVibe.Sources category reviews; no review source is enabled there yet (all 6 Sources seeds are disabled)",
+  "updated": "2026-09-23"
 }

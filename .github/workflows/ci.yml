@@ -14,6 +14,5 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm test
-      # The reviews.* capabilities and the reviews service manifest are proposals (docs/) until the
-      # lead releases them in OpenVibe.Contracts; until then this check is expected to fail.
+      # The reviews.* capabilities and the reviews service manifest are released in OpenVibe.Contracts (v0.20.0).
       - run: npx openvibe-contracts-check --service reviews --src server

@@ -2,7 +2,7 @@
 
 > Review signals gathered across sources with provenance, entity resolution and honest aggregates.
 
-**Status:** alpha (roadmap Wave 17, Reviews half). Runs and is tested against stub upstreams; **not deployed**, and `openvibe.reviews` still shows its placeholder on OpenVibe.Sites.
+**Status:** alpha (roadmap Wave 17, Reviews half). Tested against stub upstreams and **deployed internally, not launched**: it runs on the production host on 127.0.0.1:4830 only (release `3151c05`, `/api/ready` 200) with an empty database (0 entities, 0 signals), and `openvibe.reviews` still shows its placeholder on OpenVibe.Sites.
 **Domain:** `openvibe.reviews` · **Port:** 4830 · **Service id:** `reviews`
 **Plan:** OpenVibe End-to-End Realignment & Implementation Plan, revision 3 — roadmap Wave 17, §15.13, §29, §32.
 **License:** AGPL-3.0 (same as every OpenVibe service).
@@ -105,7 +105,7 @@ Old slugs 301, merged entities 301, deleted ones 410.
 `AggregateRating`, and a `Review` for a summary, are emitted **only when the aggregate exists** (i.e.
 real signals back it); without signals the page carries breadcrumbs only (tested). A recommendation
 share is expressed as `ratingValue` 0–100 with `bestRating: 100` and the real count; a summary's
-`Review` never has a `reviewRating`. The openvibe-publishing v0.2.0 gate decides robots per entity
+`Review` never has a `reviewRating`. The openvibe-publishing v0.2.1 gate decides robots per entity
 (no live signal → `unsourced`, summary under the word minimum → `thin`, unsupported points →
 `unsupported_claims`, unreviewed AI → hidden); sitemaps list indexable entities only, Atom/JSON feeds
 list published summaries, `robots.txt` and `llms.txt` are served, and Search receives
@@ -142,9 +142,10 @@ writes need an editor who is a person (staff or `REVIEWS_EDITORS`). Errors are R
 | `reviews.summary.publish` | `POST /entities/:ref/summary/revisions`, `…/revisions/:n/review`, `…/summary/publish`, `…/summary/unpublish` |
 | `reviews.correction.submit` | `POST /entities/:ref/corrections` |
 
-The ids are proposed in [docs/capabilities-proposal/](docs/capabilities-proposal/) (with
+The ids and the service manifest are released in openvibe-contracts v0.20.0 (from the proposals in
+[docs/capabilities-proposal/](docs/capabilities-proposal/) and
 [docs/service-manifest-proposal.json](docs/service-manifest-proposal.json)); `server/auth/capabilities.js`
-decides them with the contracts grant rule until a release defines them. `reviews.entity.manage` and
+decides them with the contracts grant rule. `reviews.entity.manage` and
 `reviews.summary.propose` are additions to the §15.13 minimum list.
 
 ## Events
@@ -178,7 +179,7 @@ by editors; signals arrive only from Sources.
 - OpenVibe.Community — discussion threads (`community.comment.write`)
 - OpenVibe.AI — optional, proposes summaries through `reviews.summary.propose`
 - OpenVibe.Search — consumes the index events
-- packages: openvibe-publishing v0.2.0, openvibe-contracts v0.19.0, openvibe-shared v1.3.0, openvibe-sdk v0.2.2
+- packages: openvibe-publishing v0.2.1, openvibe-contracts v0.20.0, openvibe-shared v1.3.0, openvibe-sdk v0.4.0
 
 ## Acceptance (tested in `test/`)
 
@@ -194,7 +195,8 @@ by editors; signals arrive only from Sources.
 - every event validates as `events.event-envelope@1` and every index document as `search.index-document@1`; proposals validate against the contracts schemas; nothing seeded (`signals.test.js`, `proposals.test.js`)
 
 Not yet demonstrated: a run against the deployed Sources with a real, enabled review source (none is
-enabled), a real OpenVibe.AI `reviews.summarize_entity` run, and delivery through the deployed Events.
+enabled), a real OpenVibe.AI `reviews.summarize_entity` run, and delivery of a real item through the
+deployed Events (the `sources.item.*` subscription exists in production; nothing has been delivered).
 
 ## Launch rule
 
@@ -203,11 +205,11 @@ page on [OpenVibers/OpenVibe.Sites](https://github.com/OpenVibers/OpenVibe.Sites
 following hold (plan §12.12):
 
 1. an owning runtime with health/readiness endpoints and observability — **built** (`/api/health`, `/api/ready`, `/metrics`);
-2. canonical identity/auth integration (Network subjects, a scoped service principal) — **built**, principal and grants not provisioned yet;
+2. canonical identity/auth integration (Network subjects, a scoped service principal) — **built** and provisioned in production;
 3. server-rendered public routes useful without JavaScript — **built**;
-4. real persistence and end-to-end workflows — **built**, not deployed, and no Sources review source is enabled yet;
-5. capability and event registration against OpenVibe.Contracts — **proposed** in `docs/`, not released;
-6. a migration/seed strategy (none: nothing to migrate, nothing seeded), a security/threat review, sitemap/robots/feed behaviour — discovery **built**; the security review is the lead's;
+4. real persistence and end-to-end workflows — **built** and deployed on the host (loopback only, empty database); no Sources review source is enabled yet;
+5. capability and event registration against OpenVibe.Contracts — **done** (openvibe-contracts v0.20.0);
+6. a migration/seed strategy (none: nothing to migrate, nothing seeded), a security/threat review, sitemap/robots/feed behaviour — discovery **built**; no written security/threat review exists yet;
 7. acceptance tests proving the advertised functionality — **built** (`npm test`).
 
 The launch release removes `openvibe.reviews` from `OpenVibe.Sites/sites.json`, switches routing to
