@@ -1,0 +1,19 @@
+{
+  "id": "reviews.summary.propose",
+  "version": "1.0",
+  "owner": "reviews",
+  "status": "active",
+  "visibility": "first-party",
+  "description": "The OpenVibe.AI seam (workflow reviews.summarize_entity): propose a summary revision whose every pro and con cites signals of the entity. It is stored with ai authorship (workflow and run id, stub-provider flag), is never published by this call, stays out of pages, feeds and Search until a person approves it, and can never carry a rating (rating fields and rating text are refused).",
+  "permissions": [
+    "reviews:summary:propose"
+  ],
+  "resourceConstraints": [
+    "none"
+  ],
+  "quotaClass": "reviews-write",
+  "events": [],
+  "implementedBy": [
+    "POST /api/v1/entities/:ref/summary/proposals"
+  ]
+}

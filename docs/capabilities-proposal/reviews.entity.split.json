@@ -1,0 +1,21 @@
+{
+  "id": "reviews.entity.split",
+  "version": "1.0",
+  "owner": "reviews",
+  "status": "active",
+  "visibility": "first-party",
+  "description": "Undo a merge, decided by the editor named in X-OV-Subject: ends the merged_into link (audited) and restores the pre-merge attribution exactly; both aggregates are recomputed and a summary that cited the split-off signals is flagged with a pending revision.",
+  "permissions": [
+    "reviews:entity:split"
+  ],
+  "resourceConstraints": [
+    "none"
+  ],
+  "quotaClass": "reviews-write",
+  "events": [
+    "reviews.entity.split"
+  ],
+  "implementedBy": [
+    "POST /api/v1/entities/:ref/split"
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "version": "0.1.0",
+  "contractRanges": {
+    "openvibe-contracts": ">=0.19.0 <1.0.0"
+  },
+  "id": "reviews",
+  "name": "OpenVibe.Reviews",
+  "status": "alpha",
+  "repository": "OpenVibers/OpenVibe.Reviews",
+  "domains": [
+    "openvibe.reviews"
+  ],
+  "publicOrigin": "https://openvibe.reviews",
+  "health": "/api/health",
+  "ready": "/api/ready",
+  "capabilities": [
+    "reviews.entity.resolve",
+    "reviews.entity.manage",
+    "reviews.entity.merge",
+    "reviews.entity.split",
+    "reviews.signal.import",
+    "reviews.summary.propose",
+    "reviews.summary.publish",
+    "reviews.correction.submit"
+  ],
+  "eventsProduced": [
+    "reviews.entity.merged",
+    "reviews.entity.split",
+    "reviews.signal.added",
+    "reviews.signal.removed",
+    "reviews.summary.published",
+    "reviews.summary.updated",
+    "reviews.summary.unpublished",
+    "reviews.index_document.upserted",
+    "reviews.index_document.deleted"
+  ],
+  "eventsConsumed": [
+    "sources.item.created",
+    "sources.item.updated",
+    "sources.item.removed"
+  ],
+  "namespacesOwned": [
+    "reviews.*"
+  ],
+  "notes": "Entities with aliases and typed links; resolution of OpenVibe.Sources review items by deterministic rules (source binding, URL, GTIN/SKU/MPN) with editor confirmation for name-only and conflicting matches; merges that rewrite nothing and splits that restore attribution exactly, both audited; typed signals with provenance (source item, item revision, retrieval time, licence note) and trust metadata; aggregates computed only from signals present (method reviews-aggregate@1, inputs and exclusions exposed, absent without qualifying signals, a new revision on every change); editor-written or AI-drafted-and-approved summaries whose points cite signals and never carry a rating; source removal withdraws signals, flags citing summaries and prepares a pending revision; corrections queue; Community discussion referenced, not copied. Server-rendered pages useful without JavaScript; AggregateRating/Product/Review JSON-LD only when signals back it; sitemaps, feeds and Search index events from the openvibe-publishing v0.2.0 gate. Not deployed; openvibe.reviews stays on OpenVibe.Sites until launch."
+}

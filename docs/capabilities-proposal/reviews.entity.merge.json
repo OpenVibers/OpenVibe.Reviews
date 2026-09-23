@@ -1,0 +1,21 @@
+{
+  "id": "reviews.entity.merge",
+  "version": "1.0",
+  "owner": "reviews",
+  "status": "active",
+  "visibility": "first-party",
+  "description": "Merge one entity into another, decided by the editor named in X-OV-Subject (never a service on its own). Nothing is rewritten: the merged entity keeps its aliases and its signals keep their attribution; an audited merged_into link records who, when and why, and the target's aggregate is recomputed over both. Reversible with reviews.entity.split.",
+  "permissions": [
+    "reviews:entity:merge"
+  ],
+  "resourceConstraints": [
+    "none"
+  ],
+  "quotaClass": "reviews-write",
+  "events": [
+    "reviews.entity.merged"
+  ],
+  "implementedBy": [
+    "POST /api/v1/entities/:ref/merge"
+  ]
+}

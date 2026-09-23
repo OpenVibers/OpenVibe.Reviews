@@ -1,0 +1,30 @@
+{
+  "id": "reviews.entity.resolve",
+  "version": "1.0",
+  "owner": "reviews",
+  "status": "active",
+  "visibility": "first-party",
+  "description": "Resolve a name, URL, GTIN/SKU/MPN, source binding or external id to an entity (deterministic rules; a name alone yields candidates, never a match), read entity pages as JSON (aggregate with inputs, signals with provenance, summary), their history and summary revisions, and — for an editor named in X-OV-Subject — read the resolution queue and confirm or ignore an ambiguous source item.",
+  "permissions": [
+    "reviews:entity:resolve"
+  ],
+  "resourceConstraints": [
+    "none"
+  ],
+  "quotaClass": "reviews-read",
+  "events": [
+    "reviews.signal.added",
+    "reviews.signal.removed"
+  ],
+  "implementedBy": [
+    "POST /api/v1/resolve",
+    "GET /api/v1/entities",
+    "GET /api/v1/entities/:ref",
+    "GET /api/v1/entities/:ref/history",
+    "GET /api/v1/entities/:ref/aggregate",
+    "GET /api/v1/entities/:ref/summary/revisions/:n",
+    "GET /api/v1/items",
+    "GET /api/v1/items/:id",
+    "POST /api/v1/items/:id/resolution"
+  ]
+}

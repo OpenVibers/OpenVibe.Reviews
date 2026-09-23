@@ -1,0 +1,33 @@
+[Unit]
+Description=OpenVibe.Reviews — review signals with provenance, entity resolution, honest aggregates (server-rendered)
+# Network (openvibe-network) signs the tokens this service verifies. Reviews starts without it and
+# keeps retrying the JWKS fetch: public pages work, sign-in and token calls answer 503 meanwhile.
+# Sources, Events and Community are optional: each degrades to an explicit failure state (without
+# Sources there are no signals, so no aggregates — the pages say so).
+After=network.target
+Wants=openvibe-network.service openvibe-sources.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/openvibe.reviews
+EnvironmentFile=/etc/openvibe/reviews.env
+Environment=NODE_ENV=production
+Environment=PORT=4830
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node /opt/openvibe.reviews/server/index.js
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# The code tree stays read-only; the database lives in /var/lib/openvibe-reviews.
+StateDirectory=openvibe-reviews
+Environment=REVIEWS_DB_PATH=/var/lib/openvibe-reviews/reviews.db
+
+[Install]
+WantedBy=multi-user.target

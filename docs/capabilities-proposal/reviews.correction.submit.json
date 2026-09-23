@@ -1,0 +1,19 @@
+{
+  "id": "reviews.correction.submit",
+  "version": "1.0",
+  "owner": "reviews",
+  "status": "active",
+  "visibility": "first-party",
+  "description": "Send a correction (about an entity, alias, signal, summary or aggregate, with an optional evidence URL) to the editors' queue on behalf of the person named in X-OV-Subject. Corrections are read by editors and not published.",
+  "permissions": [
+    "reviews:correction:submit"
+  ],
+  "resourceConstraints": [
+    "none"
+  ],
+  "quotaClass": "reviews-corrections",
+  "events": [],
+  "implementedBy": [
+    "POST /api/v1/entities/:ref/corrections"
+  ]
+}

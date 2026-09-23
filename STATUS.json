@@ -1,7 +1,19 @@
 {
   "repository": "OpenVibers/OpenVibe.Reviews",
-  "stage": "placeholder",
-  "code": false,
+  "stage": "alpha",
+  "code": true,
+  "wave": "W17",
   "plan": "OpenVibe End-to-End Realignment & Implementation Plan, revision 3 (20 Sep 2026)",
-  "updated": "2026-09-21"
+  "runtime": "node 22, express, better-sqlite3",
+  "port": 4830,
+  "domain": "openvibe.reviews",
+  "contracts": "openvibe-contracts v0.19.0",
+  "packages": ["openvibe-publishing v0.2.0", "openvibe-shared v1.3.0", "openvibe-sdk v0.2.2"],
+  "capabilities": ["reviews.entity.resolve", "reviews.entity.manage", "reviews.entity.merge", "reviews.entity.split", "reviews.signal.import", "reviews.summary.propose", "reviews.summary.publish", "reviews.correction.submit"],
+  "capabilitiesRegistered": false,
+  "deployed": false,
+  "onOpenVibeSites": true,
+  "seed": "none: no entities, signals, summaries or ratings are seeded",
+  "dataSource": "OpenVibe.Sources category reviews; no review source is enabled there yet",
+  "updated": "2026-09-22"
 }

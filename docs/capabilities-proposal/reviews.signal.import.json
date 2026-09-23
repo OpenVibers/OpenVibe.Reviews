@@ -1,0 +1,23 @@
+{
+  "id": "reviews.signal.import",
+  "version": "1.0",
+  "owner": "reviews",
+  "status": "active",
+  "visibility": "first-party",
+  "description": "Import review signals from OpenVibe.Sources: one item by id, or the next pages of category-reviews items in change order. Reviews fetches the item itself (sources.item.read), keeps its provenance (source, item revision, retrieval time, licence note) and only the signal fields, never review text. Removed or revised items withdraw or replace their signal; the next aggregate revision reflects it.",
+  "permissions": [
+    "reviews:signal:import"
+  ],
+  "resourceConstraints": [
+    "none"
+  ],
+  "quotaClass": "reviews-write",
+  "events": [
+    "reviews.signal.added",
+    "reviews.signal.removed"
+  ],
+  "implementedBy": [
+    "POST /api/v1/signals/import",
+    "POST /api/v1/sources/sync"
+  ]
+}

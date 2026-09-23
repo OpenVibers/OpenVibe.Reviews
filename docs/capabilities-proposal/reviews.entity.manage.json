@@ -1,0 +1,31 @@
+{
+  "id": "reviews.entity.manage",
+  "version": "1.0",
+  "owner": "reviews",
+  "status": "active",
+  "visibility": "first-party",
+  "description": "Editorial management of entities for the editor named in X-OV-Subject: create, edit, rename (old slugs redirect) and delete entities, add and remove aliases, typed links between entities or to another service's EntityRef, trust metadata (exclude a source or signal from aggregates with a visible reason, limitation and verification notes), and the correction queue.",
+  "permissions": [
+    "reviews:entity:manage"
+  ],
+  "resourceConstraints": [
+    "none"
+  ],
+  "quotaClass": "reviews-write",
+  "events": [
+    "reviews.index_document.upserted",
+    "reviews.index_document.deleted"
+  ],
+  "implementedBy": [
+    "POST /api/v1/entities",
+    "PATCH /api/v1/entities/:ref",
+    "DELETE /api/v1/entities/:ref",
+    "POST /api/v1/entities/:ref/aliases",
+    "DELETE /api/v1/entities/:ref/aliases/:id",
+    "POST /api/v1/entities/:ref/links",
+    "DELETE /api/v1/entities/:ref/links/:id",
+    "POST /api/v1/trust",
+    "GET /api/v1/corrections",
+    "PATCH /api/v1/corrections/:id"
+  ]
+}

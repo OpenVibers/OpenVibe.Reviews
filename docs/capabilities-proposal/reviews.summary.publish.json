@@ -1,0 +1,26 @@
+{
+  "id": "reviews.summary.publish",
+  "version": "1.0",
+  "owner": "reviews",
+  "status": "active",
+  "visibility": "first-party",
+  "description": "Write, review (approve or reject), publish and unpublish summary revisions as the editor named in X-OV-Subject. Publishing refuses AI or system-prepared revisions without a person's approval and any revision with a point that cites no live signal of the entity.",
+  "permissions": [
+    "reviews:summary:publish"
+  ],
+  "resourceConstraints": [
+    "none"
+  ],
+  "quotaClass": "reviews-write",
+  "events": [
+    "reviews.summary.published",
+    "reviews.summary.updated",
+    "reviews.summary.unpublished"
+  ],
+  "implementedBy": [
+    "POST /api/v1/entities/:ref/summary/revisions",
+    "POST /api/v1/entities/:ref/summary/revisions/:n/review",
+    "POST /api/v1/entities/:ref/summary/publish",
+    "POST /api/v1/entities/:ref/summary/unpublish"
+  ]
+}
