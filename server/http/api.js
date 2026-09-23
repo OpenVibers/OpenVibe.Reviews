@@ -25,7 +25,8 @@
  *   POST   /items/:id/resolution                     reviews.entity.resolve   { entity, add_alias? } | { ignore: true, note? }   editor
  *   POST   /signals/import                           reviews.signal.import    { source_item_id }   fetch the item from Sources and apply it
  *   POST   /sources/sync                             reviews.signal.import    pull the next pages of review items from Sources
- *   POST   /entities/:ref/summary/revisions          reviews.summary.publish  { overview?, overview_signals?, pros?, cons?, expected_revision?, message?, publish? }
+ *   POST   /entities/:ref/summary/revisions          reviews.summary.publish  { overview?, overview_signals?, pros?, cons?, expected_revision?, message?, publish?, correction_note?, correction_id? }
+ *                                                                            with correction_note: a correction of the published summary (published at once)
  *   POST   /entities/:ref/summary/proposals          reviews.summary.propose  { overview?, pros?, cons?, workflow: { id, run_id }, stub_provider?, note? }
  *   GET    /entities/:ref/summary/revisions/:n       reviews.entity.resolve
  *   POST   /entities/:ref/summary/revisions/:n/review reviews.summary.publish { decision: approved|rejected, note?, publish? }
@@ -33,11 +34,13 @@
  *   POST   /entities/:ref/summary/unpublish          reviews.summary.publish
  *   POST   /entities/:ref/corrections                reviews.correction.submit { target_type, target_id?, body, evidence_url? }   a person
  *   GET    /corrections                              reviews.entity.manage    open corrections (editors)
- *   PATCH  /corrections/:id                          reviews.entity.manage    { status: accepted|rejected, note? }
+ *   PATCH  /corrections/:id                          reviews.entity.manage    { status: accepted|rejected, note?, correction_note?, summary? }
+ *                                                                            accepting with a published summary corrects it (+ reviews.summary.publish)
  */
 const express = require('express');
 const contracts = require('openvibe-contracts');
 const { actorMiddleware, guard, run } = require('./common');
+const { checkCapability } = require('../auth/capabilities');
 
 const { http } = contracts;
 
@@ -142,7 +145,15 @@ function createApi({ svc, viewers, platform, sync, config, log = console }) {
         if (!svc.access.isEditor(req.actor)) throw new svc.ReviewsError(403, 'reviews.editor_required', 'Corrections are read by Reviews editors');
         return { corrections: svc.openCorrections() };
     }));
-    router.patch('/corrections/:id', guard('reviews.entity.manage'), R((req) => ({ correction: svc.resolveCorrection(req.params.id, body(req), req.actor) })));
+    router.patch('/corrections/:id', guard('reviews.entity.manage'), R((req) => {
+        const b = body(req);
+        // Accepting with a correction publishes a summary revision: a service needs that grant too.
+        if (req.actor.kind === 'service' && b.status === 'accepted' && (b.correction_note || b.summary)) {
+            const c = checkCapability(req.actor.claims, 'reviews.summary.publish');
+            if (!c.allowed) throw new svc.ReviewsError(403, c.code, c.reason);
+        }
+        return svc.resolveCorrection(req.params.id, b, req.actor);
+    }));
 
     return router;
 }

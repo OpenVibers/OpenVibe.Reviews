@@ -99,7 +99,7 @@ function aboutPage() {
 <h2 id="entities">Entities, merges and splits</h2>
 <p>Items are matched to entities by deterministic rules: a source bound to one entity, the item's URL, a GTIN, SKU or MPN. A name alone is never enough: an editor confirms it. A merge never rewrites anything, so a split restores the earlier attribution exactly; both are recorded with who, when and why.</p>
 <h2 id="corrections">Corrections and discussion</h2>
-<p>Anyone signed in can send a correction to the editors from an entity page. Discussion lives on <a href="https://openvibe.community">OpenVibe.Community</a> and is shown here, never copied.</p>
+<p>Anyone signed in can send a correction to the editors from an entity page. What you send, and who you are, stays with the editors. When an editor corrects a published summary, the correction is a new revision published with a note saying what was corrected; the earlier revisions stay readable in the summary's revision history. Discussion lives on <a href="https://openvibe.community">OpenVibe.Community</a> and is shown here, never copied.</p>
 </section>`;
 }
 
@@ -133,6 +133,20 @@ function citeLinks(cites) {
     return html`${cites.map((c, i) => html`${i ? ' ' : ''}<a href="#${c.signal_id}" class="${c.ok ? 'rv-cite' : 'rv-cite rv-cite-gone'}" title="${c.ok ? 'cited signal' : `cited signal is ${c.status}`}">[${c.signal_id.slice(-6)}${c.ok ? '' : ` ${c.status}`}]</a>`)}`;
 }
 
+/** The summary's public revision history: every revision readers may see, with each correction note. */
+function summaryHistory(en, s) {
+    const list = s.history || [];
+    if (!list.length) return '';
+    const corrections = list.filter((r) => r.correction).length;
+    return html`<h3 id="summary-history">Revision history</h3>
+<p class="rv-muted">${corrections ? `${corrections} correction${corrections === 1 ? '' : 's'}. ` : ''}Earlier revisions stay readable; a correction is a new revision, never an edit of an old one.</p>
+<ul class="rv-revisions">${list.map((r) => html`<li><a href="${epath(en)}/summary/${String(r.number)}">Revision ${String(r.number)}</a> <span class="rv-tag">${r.status}</span> ${tl(r.created_at)}${r.disclosure ? html` · ${r.disclosure}` : ''}${r.correction ? html`<br><strong>Correction:</strong> ${r.correction.note}` : ''}</li>`)}</ul>`;
+}
+
+function correctionNotice(r, at) {
+    return html`<p class="rv-notice rv-correction" role="status"><strong>Corrected</strong> ${t(at)}${r.correction.corrects ? ` (revision ${r.correction.corrects} corrected by revision ${r.number})` : ''}: ${r.correction.note}</p>`;
+}
+
 function summarySection(p) {
     const s = p.summary;
     const head = html`<h2 id="summary">Summary</h2>`;
@@ -146,13 +160,15 @@ function summarySection(p) {
     const ov = r.points.find((x) => x.kind === 'overview');
     return html`<section class="rv-summary">${head}
 ${r.disclosure ? notice('ai', r.disclosure.long) : html`<p class="rv-muted">Written by OpenVibe.Reviews editors. Revision ${String(r.number)}, published ${t(s.revision_published_at)}.</p>`}
+${r.correction ? correctionNotice(r, s.revision_published_at) : ''}
 ${s.flagged ? notice('warn', `Under review: ${s.flag_reason || 'a cited signal changed'} (${s.flagged_at ? s.flagged_at.slice(0, 10) : ''}). Points whose citations are marked below may no longer be supported.`) : ''}
 ${r.overview ? html`<div class="rv-content">${raw(ssr.renderMarkdown(r.overview, { headingShift: 2 }))}${ov ? html`<p class="rv-muted">Cites ${citeLinks(ov.citations)}</p>` : ''}</div>` : ''}
 <div class="rv-proscons">
 <div><h3>Pros</h3>${pros.length ? html`<ul>${pros.map((x) => html`<li${x.supported ? '' : raw(' class="rv-unsupported"')}>${x.text} ${citeLinks(x.citations)}</li>`)}</ul>` : html`<p class="rv-muted">None listed.</p>`}</div>
 <div><h3>Cons</h3>${cons.length ? html`<ul>${cons.map((x) => html`<li${x.supported ? '' : raw(' class="rv-unsupported"')}>${x.text} ${citeLinks(x.citations)}</li>`)}</ul>` : html`<p class="rv-muted">None listed.</p>`}</div>
 </div>
-<p class="rv-muted">A summary never carries a rating: the only numbers are the signals above and the aggregate computed from them.</p></section>`;
+<p class="rv-muted">A summary never carries a rating: the only numbers are the signals above and the aggregate computed from them.</p>
+${summaryHistory(p.entity, s)}</section>`;
 }
 
 function signalRow(s) {
@@ -233,7 +249,7 @@ function historyPage(h) {
 <h2 id="aggregates">Aggregate revisions</h2>
 ${h.aggregates.length ? html`<div class="rv-scroll"><table class="rv-history"><thead><tr><th>Revision</th><th>Computed</th><th>Why</th><th>Result</th></tr></thead><tbody>${h.aggregates.map((a) => html`<tr><td>${String(a.revision)}</td><td>${tl(a.computed_at)}</td><td>${a.trigger.replace(/_/g, ' ')}</td><td>${aggregateLine(a)}${a.result ? html` <span class="rv-muted">(${String(a.result.inputs.length)} inputs)</span>` : ''}</td></tr>`)}</tbody></table></div>` : html`<p class="rv-muted">No aggregate has ever been computed: no qualifying signal yet.</p>`}
 <h2 id="summary">Summary revisions</h2>
-${h.summary_revisions.length ? html`<ul>${h.summary_revisions.map((r) => html`<li><a href="${epath(en)}/summary/${String(r.number)}">Revision ${String(r.number)}</a> <span class="rv-tag">${r.status}</span> ${t(r.created_at)}${r.disclosure ? html` · ${r.disclosure.short}` : ''}${r.system ? html` · prepared after: ${r.system.reason}` : ''}${r.message ? html` <span class="rv-muted">${r.message}</span>` : ''}</li>`)}</ul>` : html`<p class="rv-muted">No summary revisions.</p>`}
+${h.summary_revisions.length ? html`<ul>${h.summary_revisions.map((r) => html`<li><a href="${epath(en)}/summary/${String(r.number)}">Revision ${String(r.number)}</a> <span class="rv-tag">${r.status}</span> ${t(r.created_at)}${r.disclosure ? html` · ${r.disclosure.short}` : ''}${r.system ? html` · prepared after: ${r.system.reason}` : ''}${r.correction ? html`<br><strong>Correction:</strong> ${r.correction.note}` : (r.message ? html` <span class="rv-muted">${r.message}</span>` : '')}</li>`)}</ul>` : html`<p class="rv-muted">No summary revisions.</p>`}
 <h2 id="merges">Merges and splits</h2>
 ${h.merges.length ? html`<ul>${h.merges.map((m) => html`<li><a href="${epath(m.from)}">${m.from.name}</a> merged into <a href="${epath(m.to)}">${m.to.name}</a> ${tl(m.merged_at)}${m.note ? html` — ${m.note}` : ''}${m.split_at ? html`; split again ${tl(m.split_at)}${m.split_note ? html` — ${m.split_note}` : ''}` : html` <span class="rv-tag">active</span>`}</li>`)}</ul>` : html`<p class="rv-muted">None.</p>`}
 <h2 id="signals">Every signal, including replaced and withdrawn ones</h2>
@@ -247,6 +263,7 @@ function summaryRevisionPage(en, r, { editor }) {
     return html`${crumbs([{ name: 'Reviews', url: '/' }, { name: en.name, url: epath(en) }, { name: 'History', url: `${epath(en)}/history` }, { name: `Summary revision ${r.number}` }])}
 <section><h1>Summary revision ${String(r.number)} <span class="rv-tag">${r.status}</span></h1>
 ${r.disclosure ? notice('ai', r.disclosure.long) : html`<p class="rv-muted">Written by an editor ${t(r.created_at)}.</p>`}
+${r.correction ? correctionNotice(r, r.created_at) : ''}
 ${r.system ? notice('warn', `Prepared automatically after: ${r.system.reason}. ${r.system.dropped_points && r.system.dropped_points.length ? `${r.system.dropped_points.length} point(s) were dropped because every signal they cited is gone.` : ''}`) : ''}
 ${r.overview ? html`<div class="rv-content">${raw(ssr.renderMarkdown(r.overview, { headingShift: 1 }))}</div>` : ''}
 <ul>${r.points.filter((p) => p.kind !== 'overview').map((p) => html`<li><strong>${p.kind === 'pro' ? 'Pro' : 'Con'}:</strong> ${p.text} ${citeLinks(p.citations)}</li>`)}</ul>
@@ -261,7 +278,7 @@ function correctionPage(en, { values = {}, error = null, done = false } = {}) {
 <section><h1>Suggest a correction for ${en.name}</h1>
 ${done ? notice('ok', 'Thank you. Your correction is in the editors\' queue.') : ''}
 ${error ? notice('error', error) : ''}
-<p>Tell the editors what is wrong: a signal attributed to the wrong thing, a source that should not count, a summary point the cited signals do not support. Corrections are read by editors; they are not published.</p>
+<p>Tell the editors what is wrong: a signal attributed to the wrong thing, a source that should not count, a summary point the cited signals do not support. What you write, and who you are, stays with the editors. If they correct the summary, they publish a correction note saying what changed, next to the earlier revision.</p>
 <form method="post" action="${epath(en)}/correct" class="rv-form">
 <label>About <select name="target_type">${['entity', 'signal', 'summary', 'aggregate', 'alias'].map((x) => html`<option value="${x}"${values.target_type === x ? raw(' selected') : ''}>${x}</option>`)}</select></label>
 <label>Which one (optional: a signal id such as sig_…) <input type="text" name="target_id" maxlength="100" value="${values.target_id || ''}"></label>
@@ -284,7 +301,11 @@ ${pending.length ? html`<ul>${pending.map((x) => html`<li><a href="${epath(x.ent
 ${flagged.length ? html`<ul>${flagged.map((s) => html`<li><a href="${epath(s.entity)}">${s.entity.name}</a>: ${s.flag_reason}</li>`)}</ul>` : html`<p class="rv-muted">None.</p>`}
 <h2 id="corrections">Open corrections</h2>
 ${corrections.length ? html`<ul>${corrections.map((c) => html`<li><a href="${epath(c.entity)}">${c.entity.name}</a> · ${c.target_type}${c.target_id ? ` ${c.target_id}` : ''} · ${t(c.created_at)}<blockquote>${c.body}</blockquote>${safeUrl(c.evidence_url) ? html`<a href="${safeUrl(c.evidence_url)}" rel="nofollow noopener">evidence</a>` : ''}
-<form method="post" action="/editor/corrections/${e(c.id)}" class="rv-inline"><input type="text" name="note" placeholder="Note" maxlength="500"> <button type="submit" name="status" value="accepted">Accepted</button> <button type="submit" name="status" value="rejected">Rejected</button></form></li>`)}</ul>` : html`<p class="rv-muted">None.</p>`}
+<form method="post" action="/editor/corrections/${e(c.id)}" class="rv-form">
+${c.summary_published ? html`<label>Correction note, published with a new summary revision (required to accept) <input type="text" name="correction_note" maxlength="2000"></label>
+<p class="rv-muted">Accepting publishes the current summary text again as a correction revision with this note. To change the text as well, <a href="${epath(c.entity)}/edit?correction=${e(c.id)}#summary-form">correct the summary</a>.</p>` : ''}
+<label>Note for editors (not published) <input type="text" name="note" maxlength="500"></label>
+<button type="submit" name="status" value="accepted">Accepted</button> <button type="submit" name="status" value="rejected">Rejected</button></form></li>`)}</ul>` : html`<p class="rv-muted">None.</p>`}
 </section>`;
 }
 
@@ -308,7 +329,7 @@ function newEntityPage({ values = {}, error = null } = {}) {
 <button type="submit">Create</button></form></section>`;
 }
 
-function editEntityPage({ page: p, error = null, flash = null, entities = [] }) {
+function editEntityPage({ page: p, error = null, flash = null, correcting = null, entities = [] }) {
     const en = p.entity;
     const allSignals = p.signals;
     const sel = (name, chosen = []) => html`<select name="${name}" multiple size="4">${allSignals.map((s) => html`<option value="${s.signal_id}"${chosen.includes(s.signal_id) ? raw(' selected') : ''}>${s.signal_id.slice(-8)} · ${s.source_key} · ${signalValue(s)}</option>`)}</select>`;
@@ -336,12 +357,14 @@ function editEntityPage({ page: p, error = null, flash = null, entities = [] }) 
 
 <h2>Summary</h2>
 <p class="rv-muted">Every pro and con cites the signals it rests on. A summary carries no rating. Saving creates a new revision; "Save and publish" publishes it.</p>
-<form method="post" action="${epath(en)}/summary" class="rv-form">
+<form method="post" action="${epath(en)}/summary" class="rv-form" id="summary-form">
+${correcting ? html`<div class="rv-notice rv-correction"><p>Correcting the summary in answer to a reader's correction request (${correcting.target_type}${correcting.target_id ? ` ${correcting.target_id}` : ''}):</p><blockquote>${correcting.body}</blockquote><p class="rv-muted">Publishing accepts the request. The request stays with the editors; the correction note below is what readers see.</p></div><input type="hidden" name="correction_id" value="${correcting.id}">` : ''}
 <label>Overview (Markdown) <textarea name="overview" rows="6" maxlength="6000">${cur ? cur.overview : ''}</textarea></label>
 <label>The overview cites ${sel('overview_signals', ov ? ov.citations.filter((c) => c.ok).map((c) => c.signal_id) : [])}</label>
 <fieldset><legend>Pros</legend>${rows('pro', pros)}</fieldset>
 <fieldset><legend>Cons</legend>${rows('con', cons)}</fieldset>
 <label>Revision note <input type="text" name="message" maxlength="500"></label>
+${cur ? html`<label>Correction note (public; fill it in only to correct the published summary: the revision is published at once and the note stays in its history) <input type="text" name="correction_note" maxlength="2000"${correcting ? raw(' required minlength="10"') : ''}></label>` : ''}
 <input type="hidden" name="expected_revision" value="${String(p.summary ? p.summary.head_revision : 0)}">
 <button type="submit" name="publish" value="0">Save</button> <button type="submit" name="publish" value="1">Save and publish</button></form>
 ${p.summary && p.summary.pending && p.summary.pending.length ? html`<p>Waiting for review: ${p.summary.pending.map((r, i) => html`${i ? ', ' : ''}<a href="${epath(en)}/summary/${String(r.number)}">revision ${String(r.number)}</a> <span class="rv-tag">${r.status}</span>`)}</p>` : ''}

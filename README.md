@@ -91,7 +91,16 @@ revision (citations moved to replacements, unsupported points dropped) waits for
 
 **Corrections.** Signed-in people send corrections (entity, alias, signal, summary, aggregate, optional
 evidence URL) from the entity page or `reviews.correction.submit`; editors accept or reject them on the
-desk. Correction text is not published.
+desk. What a request says and who sent it are never published. A correction of a published summary is
+a new immutable summary revision carrying a public correction note (who: the editor who wrote it; when:
+its time), approved by that editor and published at once: accepting a request about an entity whose
+summary is published needs that note (the text is carried forward unless the editor changes it, from
+the desk or the edit page), and an editor can correct on their own with `correction_note` on a new
+revision. The entity page shows the corrected text, a "Corrected" notice and the summary's revision
+history with every correction note; earlier revisions stay readable at `/e/:slug/summary/:n`. Rejecting
+creates nothing. AI-drafted text a person corrected becomes AI-assisted (hybrid), never "written by a
+person". JSON-LD (`dateModified`), the feeds (a new entry that starts with the note) and the Search
+document follow the corrected revision.
 
 **Pages (SSR, useful without JavaScript).** `/`, `/about`, `/search`, `/e/:slug` (aggregate with inputs
 and computation, summary with citations, signal table with provenance and timestamps, sources and
@@ -135,11 +144,11 @@ writes need an editor who is a person (staff or `REVIEWS_EDITORS`). Errors are R
 | Capability | Routes |
 |---|---|
 | `reviews.entity.resolve` | `POST /resolve`, `GET /entities`, `GET /entities/:ref`, `/history`, `/aggregate`, `/summary/revisions/:n`, `GET /items`, `GET /items/:id`, `POST /items/:id/resolution` |
-| `reviews.entity.manage` | `POST|PATCH|DELETE /entities[/:ref]`, aliases, links, `POST /trust`, `GET /corrections`, `PATCH /corrections/:id` |
+| `reviews.entity.manage` | `POST|PATCH|DELETE /entities[/:ref]`, aliases, links, `POST /trust`, `GET /corrections`, `PATCH /corrections/:id` `{ status, note?, correction_note?, summary? }` (accepting with a correction also needs `reviews.summary.publish`) |
 | `reviews.entity.merge` / `reviews.entity.split` | `POST /entities/:ref/merge` `{ into, note }`, `POST /entities/:ref/split` `{ note }` |
 | `reviews.signal.import` | `POST /signals/import` `{ source_item_id }`, `POST /sources/sync` |
 | `reviews.summary.propose` | `POST /entities/:ref/summary/proposals` (OpenVibe.AI) |
-| `reviews.summary.publish` | `POST /entities/:ref/summary/revisions`, `…/revisions/:n/review`, `…/summary/publish`, `…/summary/unpublish` |
+| `reviews.summary.publish` | `POST /entities/:ref/summary/revisions` (`correction_note`, `correction_id`: a correction, published at once), `…/revisions/:n/review`, `…/summary/publish`, `…/summary/unpublish` |
 | `reviews.correction.submit` | `POST /entities/:ref/corrections` |
 
 The ids and the service manifest are released in openvibe-contracts v0.20.0 (from the proposals in
@@ -152,7 +161,9 @@ decides them with the contracts grant rule. `reviews.entity.manage` and
 
 Produced (transactional outbox → OpenVibe.Events when `EVENTS_URL` is set): `reviews.entity.merged`,
 `reviews.entity.split`, `reviews.signal.added` (with `replaces`), `reviews.signal.removed` (status,
-reason, `replaced_by`), `reviews.summary.published|updated|unpublished`, and the Search index events
+reason, `replaced_by`), `reviews.summary.published|updated|unpublished` (a correction is
+`reviews.summary.updated` with `correction: { note, corrects }`; a dedicated `reviews.summary.corrected`
+would first need registering in OpenVibe.Contracts), and the Search index events
 `reviews.index_document.upserted|deleted`. Consumed: `sources.item.created|updated|removed`
 (subscription created with `scripts/subscribe.js`).
 
@@ -191,6 +202,7 @@ by editors; signals arrive only from Sources.
 - **provenance on every signal**, enforced by the schema, immutable by trigger; review text never stored (`signals.test.js`)
 - **no-JS**: every public page and every editor workflow works with plain HTML and form posts; Community comments are shown, never copied (`nojs.test.js`)
 - a withdrawn cited signal flags the summary and prepares a pending revision that only a person can publish (`summaries.test.js`)
+- **a correction yields a public revision**: accepting a request (or an editor correcting on their own) creates a new immutable revision with the correction note, the page shows the corrected text and the revision history with the note without JavaScript, the old revision stays readable, Search/JSON-LD/feeds/events follow it, the request's text and sender never reach a public surface, a rejection creates nothing, and only an editor who is a person decides (`corrections.test.js`)
 - deterministic resolution; a name alone never resolves; permissions and capabilities enforced (`resolution.test.js`)
 - every event validates as `events.event-envelope@1` and every index document as `search.index-document@1`; proposals validate against the contracts schemas; nothing seeded (`signals.test.js`, `proposals.test.js`)
 

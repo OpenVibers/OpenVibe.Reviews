@@ -7,8 +7,8 @@
  *
  * Every write runs in one SQLite transaction together with the events it causes (transactional
  * outbox): reviews.entity.merged|split, reviews.signal.added|removed,
- * reviews.summary.published|updated|unpublished, and the Search index events
- * reviews.index_document.upserted|deleted.
+ * reviews.summary.published|updated|unpublished (a correction is an `updated` carrying
+ * `correction`), and the Search index events reviews.index_document.upserted|deleted.
  *
  * Methods take an actor (server/reviews/access.js) and throw ReviewsError (status + stable code).
  */
@@ -34,8 +34,11 @@ const SUMMARY_WORKFLOW = 'reviews.summarize_entity';
 const MAX_POINTS = 12;
 const MAX_POINT = 600;
 const MAX_OVERVIEW = 6000;
+const MIN_CORRECTION_NOTE = 10;
+const MAX_CORRECTION_NOTE = 2000;
 // A summary is text with citations. Nothing in it can carry a score.
-const SUMMARY_KEYS = new Set(['overview', 'pros', 'cons', 'overview_signals', 'expected_revision', 'expectedRevision', 'message', 'publish', 'workflow', 'stub_provider', 'stubProvider', 'note']);
+const SUMMARY_KEYS = new Set(['overview', 'pros', 'cons', 'overview_signals', 'expected_revision', 'expectedRevision', 'message', 'publish', 'workflow', 'stub_provider', 'stubProvider', 'note', 'correction_note', 'correction_id']);
+const BODY_KEYS = ['overview', 'overview_signals', 'pros', 'cons'];
 const RATING_KEY_RE = /(rating|stars?|score|grade|verdict_value)/i;
 // Numeric ratings in AI text ("4.5/5", "8 out of 10", "★★★★"): AI output never states a rating.
 const RATING_TEXT_RE = /(\b\d+(?:[.,]\d+)?\s*(?:\/|out of)\s*(?:5|10|100)\b)|[★☆⭐]|\b\d+(?:[.,]\d+)?\s*stars?\b/i;
@@ -330,6 +333,90 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
 
     function writeCitations(summary, rev) {
         for (const p of summaryPoints(rev)) for (const id of p.signals) q.insertCitation.run(summary.id, rev.number, p.key, id);
+    }
+
+    function expectedOf(input, head) {
+        if (input.expected_revision != null && input.expected_revision !== '') return Number(input.expected_revision);
+        if (input.expectedRevision != null && input.expectedRevision !== '') return Number(input.expectedRevision);
+        return head;
+    }
+
+    function createRevision(args) {
+        try {
+            return revisions.create(args).revision;
+        } catch (err) {
+            if (err && err.code === 'revision.conflict') fail(412, 'revision.conflict', err.message, { expected: err.expected, current: err.current });
+            throw err;
+        }
+    }
+
+    // ── Corrections of a published summary ───────────────────
+    const wantsCorrection = (input) => [input.correction_note, input.correction_id].some((v) => v != null && String(v).trim() !== '');
+
+    /** The correction note is public text: what was wrong and what changed. */
+    function checkCorrectionNote(v) {
+        const s = String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
+        if (s.length < MIN_CORRECTION_NOTE) fail(422, 'correction.note_required', `A correction says what was corrected, in a note readers will see (at least ${MIN_CORRECTION_NOTE} characters)`);
+        if (s.length > MAX_CORRECTION_NOTE) fail(422, 'correction.invalid', `A correction note is at most ${MAX_CORRECTION_NOTE} characters`);
+        return s;
+    }
+
+    /**
+     * Who answers for a correction revision: the correcting editor joins the published revision's
+     * authors. AI-drafted text a person corrected is AI-assisted (hybrid), never "written by a person".
+     */
+    function correctionAuthorship(base, who) {
+        const authors = [...new Set([...((base && base.authors) || []), who])];
+        if (base && (base.mode === 'ai' || base.mode === 'hybrid') && base.workflow) {
+            return authorship.record({ mode: 'hybrid', authors, workflow: base.workflow, stubProvider: !!base.stubProvider });
+        }
+        return authorship.record({ mode: 'human', authors });
+    }
+
+    /** The published text as summary input (a correction that changes no words, e.g. after a signal fix). */
+    function carryForward(rev) {
+        const f = rev.fields || {};
+        return { overview: rev.content || '', overview_signals: f.overview_signals || [], pros: f.pros || [], cons: f.cons || [] };
+    }
+
+    /**
+     * Corrects a published summary: a new immutable revision carrying the public correction note
+     * (who: its author, the editor; when: its time), approved by that editor and published at once.
+     * Earlier revisions stay in the public history. Without new text the published text is carried
+     * forward. An open correction request it answers is accepted in the same transaction; what the
+     * request said and who sent it stay with the editors.
+     */
+    function correctSummary(e, input, { note, requestId = null, resolutionNote = null }, actor, who) {
+        const text = checkCorrectionNote(note);
+        const summary = q.summary.get(e.id);
+        if (!summary || summary.state !== 'published' || !summary.published_revision) fail(409, 'summary.not_published', 'Only a published summary is corrected; save and publish a revision instead');
+        let request = null;
+        if (requestId != null && String(requestId).trim() !== '') {
+            request = q.correction.get(String(requestId).trim());
+            if (!request) fail(404, 'correction.not_found', 'No such correction');
+            if (canonicalOf(request.entity_id) !== e.id) fail(409, 'correction.other_entity', 'That correction is about another entity');
+            if (request.status !== 'open') fail(409, 'correction.closed', `Already ${request.status}`);
+        }
+        const pub = revisions.get(summary.id, summary.published_revision);
+        const body = checkSummaryInput(e.id, BODY_KEYS.some((k) => input[k] !== undefined) ? input : carryForward(pub));
+        const revision = createRevision({
+            entityId: summary.id, expectedRevision: expectedOf(input, revisions.headNumber(summary.id)), content: body.content, fields: body.fields,
+            meta: {
+                authorship: correctionAuthorship(pub.meta && pub.meta.authorship, who),
+                correction: { note: text, request: request ? request.id : null, corrects: pub.number },
+            },
+            author: who, message: input.message ? String(input.message).slice(0, 500) : `Correction: ${text.slice(0, 200)}`, allowUnchanged: true,
+        });
+        writeCitations(summary, revision);
+        reviews.record({ entityId: summary.id, revision: revision.number, reviewer: who, decision: 'approved', note: 'correction' });
+        if (request) {
+            q.resolveCorrection.run('accepted', who, resolutionNote, now(), request.id);
+            audit(actor, 'correction.accepted', e.id, request.id, { note: resolutionNote, summary_revision: revision.number });
+        }
+        audit(actor, 'summary.corrected', e.id, summary.id, { revision: revision.number, corrects: pub.number, correction_id: request ? request.id : null });
+        svc.publishSummary(e.id, { revision: revision.number }, actor);
+        const fresh = q.summary.get(e.id);
+        return { summary: fresh, revision: summaryRevisionView(fresh, revisions.get(summary.id, revision.number), e.id), published: true, correction: request ? q.correction.get(request.id) : null };
     }
 
     function revisionStatus(summary, rev) {
@@ -829,8 +916,33 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             disclosure: rec ? authorship.disclosure(rec, review) : null,
             review: review ? { decision: review.decision, reviewed_at: review.reviewedAt } : null,
             system: rev.meta && rev.meta.system ? rev.meta.system : null,
+            correction: correctionView(rev),
             author: rev.author, message: rev.message, created_at: rev.createdAt,
         };
+    }
+
+    /** The public side of a correction: the note, which revision it corrects, and whether a reader asked for it. */
+    function correctionView(rev) {
+        const c = rev && rev.meta && rev.meta.correction;
+        return c ? { note: c.note, corrects: c.corrects, requested: !!c.request } : null;
+    }
+
+    /** The summary's history as readers may see it, newest first (entity page). */
+    function publicHistory(summary) {
+        if (!summary) return [];
+        return revisions.list(summary.id, { limit: 200 }).filter((r) => publicRevision(summary, r)).map((r) => {
+            const d = r.meta && r.meta.authorship ? authorship.disclosure(r.meta.authorship, reviews.latest(summary.id, r.number)) : null;
+            return { number: r.number, status: revisionStatus(summary, r), created_at: r.createdAt, disclosure: d ? d.short : null, correction: correctionView(r) };
+        });
+    }
+
+    // Audit detail readers never see: which correction request it was, what it said, how editors resolved it.
+    function auditDetail(r, editor) {
+        const d = parse(r.detail, {});
+        if (editor) return d;
+        if (/^correction\./.test(r.action)) return {};
+        const { correction_id: _hidden, ...rest } = d;
+        return rest;
     }
 
     // ── Public API ───────────────────────────────────────────
@@ -889,6 +1001,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                     published_at: toIso(summary.published_at), revision_published_at: toIso(summary.revision_published_at),
                     published: pub ? summaryRevisionView(summary, pub, e.id) : null,
                     pending: editor ? pendingRevisions(summary).map((p) => summaryRevisionView(summary, p.rev, e.id)) : pendingRevisions(summary).length,
+                    history: publicHistory(summary),
                 } : null,
                 open_corrections: q.openCorrectionsOf.get(e.id).n,
                 decision: decide(e),
@@ -912,8 +1025,8 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                 })),
                 signals: allSignalsIn(closure(e.id)).map(signalView),
                 audit: q.auditOf.all(e.id, e.id).map((r) => ({
-                    id: r.id, at: toIso(r.at), action: r.action, target: r.target,
-                    actor: editor ? r.actor : (/^usr_/.test(r.actor) ? 'an editor' : r.actor), detail: parse(r.detail, {}),
+                    id: r.id, at: toIso(r.at), action: r.action, target: editor || !/^correction\./.test(r.action) ? r.target : null,
+                    actor: editor ? r.actor : (/^usr_/.test(r.actor) ? 'an editor' : r.actor), detail: auditDetail(r, editor),
                 })),
             };
         },
@@ -1245,27 +1358,24 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         trustMap,
 
         // Summaries (reviews.summary.publish | reviews.summary.propose) ----------------------
-        /** An editor writes a summary revision; publish: true publishes it at once. */
+        /**
+         * An editor writes a summary revision; publish: true publishes it at once. With a
+         * correction_note (and optionally the correction_id of a reader's request it answers) the
+         * revision corrects the published summary: it carries the note and is published at once.
+         */
         writeSummary(ref, input = {}, actor) {
             const who = requireEditorPerson(actor, 'Writing a summary');
             return tx(() => {
                 const e = entityOrFail(ref);
                 if (e.state !== 'active') fail(409, 'entity.not_active', `This entity is ${e.state}`);
+                if (wantsCorrection(input)) return correctSummary(e, input, { note: input.correction_note, requestId: input.correction_id }, actor, who);
                 const body = checkSummaryInput(e.id, input);
                 const summary = ensureSummary(e.id);
-                const head = revisions.headNumber(summary.id);
-                const expected = input.expected_revision != null ? Number(input.expected_revision) : input.expectedRevision != null ? Number(input.expectedRevision) : head;
-                let revision;
-                try {
-                    ({ revision } = revisions.create({
-                        entityId: summary.id, expectedRevision: expected, content: body.content, fields: body.fields,
-                        meta: { authorship: authorship.record({ mode: 'human', authors: [who] }) }, author: who,
-                        message: input.message ? String(input.message).slice(0, 500) : null, allowUnchanged: true,
-                    }));
-                } catch (err) {
-                    if (err && err.code === 'revision.conflict') fail(412, 'revision.conflict', err.message, { expected: err.expected, current: err.current });
-                    throw err;
-                }
+                const revision = createRevision({
+                    entityId: summary.id, expectedRevision: expectedOf(input, revisions.headNumber(summary.id)), content: body.content, fields: body.fields,
+                    meta: { authorship: authorship.record({ mode: 'human', authors: [who] }) }, author: who,
+                    message: input.message ? String(input.message).slice(0, 500) : null, allowUnchanged: true,
+                });
                 writeCitations(summary, revision);
                 audit(actor, 'summary.revision', e.id, summary.id, { revision: revision.number });
                 let published = null;
@@ -1353,7 +1463,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                         product: 'reviews', type: 'summary', action, id: summary.id, revision: n,
                         actor: hooks.subjectRef(actorId(actor)), decision, now: now(),
                         document: { owner: 'reviews', type: 'summary', id: summary.id, revision: doc ? doc.revision : 0, deleted: false, visibility: 'public', canonical_url: entityUrl(fresh), publication_state: 'published', indexability: hooks.searchIndexability(decision) },
-                        extra: { entity_id: e.id, entity_slug: fresh.slug, authorship: rec ? hooks.AUTHORSHIP[rec.mode] : null },
+                        extra: { entity_id: e.id, entity_slug: fresh.slug, authorship: rec ? hooks.AUTHORSHIP[rec.mode] : null, ...(rev.meta && rev.meta.correction ? { correction: { note: rev.meta.correction.note, corrects: rev.meta.correction.corrects } } : {}) },
                     }));
                 }
                 return q.summary.get(e.id);
@@ -1431,18 +1541,40 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                 return q.correction.get(id);
             });
         },
-        openCorrections() { return q.openCorrections.all().map((c) => ({ ...c, entity: q.entity.get(c.entity_id) })); },
+        openCorrections() {
+            return q.openCorrections.all().map((c) => {
+                const entity = q.entity.get(canonicalOf(c.entity_id) || c.entity_id);
+                const s = entity && entity.state === 'active' ? q.summary.get(entity.id) : null;
+                return { ...c, entity, summary_published: !!(s && s.state === 'published') };
+            });
+        },
         correction(id) { return q.correction.get(String(id)) || null; },
-        resolveCorrection(id, { status, note = null } = {}, actor) {
-            requireEditorPerson(actor, 'Resolving a correction');
+        /**
+         * An editor accepts or rejects a correction request. `note` stays with the editors. Accepting
+         * a request about an entity whose summary is published corrects that summary: a new revision
+         * with the public `correction_note` (and the new text in `summary`, or the published text
+         * carried forward). Rejecting creates nothing.
+         */
+        resolveCorrection(id, { status, note = null, correction_note: correctionNote = null, summary: body = null } = {}, actor) {
+            const who = requireEditorPerson(actor, 'Resolving a correction');
             if (!['accepted', 'rejected'].includes(status)) fail(422, 'correction.invalid', 'status is accepted or rejected');
+            if (body != null && (typeof body !== 'object' || Array.isArray(body))) fail(422, 'summary.invalid', 'summary is { overview, overview_signals, pros, cons }');
             return tx(() => {
                 const c = q.correction.get(String(id));
                 if (!c) fail(404, 'correction.not_found', 'No such correction');
                 if (c.status !== 'open') fail(409, 'correction.closed', `Already ${c.status}`);
-                q.resolveCorrection.run(status, actorId(actor), note ? String(note).slice(0, 2000) : null, now(), c.id);
-                audit(actor, `correction.${status}`, c.entity_id, c.id, { note });
-                return q.correction.get(c.id);
+                const internal = note ? String(note).slice(0, 2000) : null;
+                if (status === 'accepted') {
+                    const e = q.entity.get(canonicalOf(c.entity_id) || c.entity_id);
+                    const s = e && e.state === 'active' ? q.summary.get(e.id) : null;
+                    if (s && s.state === 'published') {
+                        const out = correctSummary(e, { ...(body || {}) }, { note: correctionNote, requestId: c.id, resolutionNote: internal }, actor, who);
+                        return { correction: out.correction, revision: out.revision };
+                    }
+                }
+                q.resolveCorrection.run(status, who, internal, now(), c.id);
+                audit(actor, `correction.${status}`, c.entity_id, c.id, { note: internal });
+                return { correction: q.correction.get(c.id), revision: null };
             });
         },
 

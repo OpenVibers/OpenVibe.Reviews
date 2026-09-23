@@ -9,7 +9,7 @@
  *   GET  /e/:slug                       entity page: aggregate with inputs, summary, signals with provenance, discussion
  *   GET  /e/:slug.json                  the same data as JSON
  *   GET  /e/:slug/history               aggregate revisions, summary revisions, merges and splits, every signal, editorial log
- *   GET  /e/:slug/summary/:n            one summary revision (editors: approve / reject)
+ *   GET  /e/:slug/summary/:n            one summary revision (editors: approve / reject); corrections carry their note
  *   GET|POST /e/:slug/correct           a signed-in person sends a correction to the editors
  *   POST /e/:slug/discuss               comment through OpenVibe.Community
  *   Editors: GET /editor, POST /editor/sync, GET|POST /editor/entities/new, GET|POST /e/:slug/edit,
@@ -47,12 +47,15 @@ function structuredData(p, config) {
     const pub = p.summary && p.summary.published;
     if (pub && pub.points.some((x) => x.supported)) {
         const text = [pub.overview || '', ...pub.points.filter((x) => x.kind !== 'overview').map((x) => `${x.kind === 'pro' ? 'Pro' : 'Con'}: ${x.text}`)].join('\n').trim();
-        out.push(seo.structuredData.review({
+        const review = seo.structuredData.review({
             url: `${en.url}#summary`, itemReviewed: { type, name: en.name, url: en.url },
             author: { type: 'Organization', name: 'OpenVibe.Reviews editors', url: `${origin}/about` },
-            datePublished: p.summary.revision_published_at, body: text.slice(0, 5000),
+            datePublished: p.summary.published_at || p.summary.revision_published_at, body: text.slice(0, 5000),
             publisher: { name: 'OpenVibe', url: 'https://openvibe.network' },
-        }));
+        });
+        // A later revision (an update or a correction) is the same review, modified.
+        if (review && p.summary.published_at && p.summary.revision_published_at !== p.summary.published_at) review.dateModified = p.summary.revision_published_at;
+        out.push(review);
     }
     return out.filter(Boolean);
 }
@@ -75,6 +78,7 @@ function summaryFromForm(b) {
         pros: points('pro'), cons: points('con'),
         expected_revision: b.expected_revision != null && b.expected_revision !== '' ? Number(b.expected_revision) : undefined,
         message: b.message || null, publish: b.publish === '1',
+        correction_note: b.correction_note || null, correction_id: b.correction_id || null,
     };
 }
 
@@ -266,15 +270,21 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         }
     }));
 
-    function editPage(req, res, e, { status = 200, error = null, flash = null } = {}) {
-        send(req, res, status, views.editEntityPage({ page: svc.page(e, req.actor), error, flash, entities: svc.listEntities({ limit: 200 }).entities }), { title: `Edit ${e.name}`, robots: 'noindex, nofollow' });
+    /** An open correction request about `e` (the summary form then answers it). */
+    function openCorrectionFor(e, id) {
+        const c = id ? svc.correction(String(id)) : null;
+        return c && c.status === 'open' && svc.canonicalOf(c.entity_id) === e.id ? c : null;
+    }
+
+    function editPage(req, res, e, { status = 200, error = null, flash = null, correcting = null } = {}) {
+        send(req, res, status, views.editEntityPage({ page: svc.page(e, req.actor), error, flash, correcting, entities: svc.listEntities({ limit: 200 }).entities }), { title: `Edit ${e.name}`, robots: 'noindex, nofollow' });
     }
 
     router.get('/e/:slug/edit', (req, res) => {
         if (!editorOnly(req, res)) return;
         const e = locate(req, res, '/edit');
         if (!e) return;
-        editPage(req, res, e, { flash: req.query.saved ? 'Saved.' : null });
+        editPage(req, res, e, { flash: req.query.saved ? 'Saved.' : null, correcting: openCorrectionFor(e, req.query.correction) });
     });
     router.post('/e/:slug/edit', form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
@@ -311,7 +321,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
             res.redirect(303, `${svc.entityPath(e)}/edit?saved=1`);
         } catch (err) {
             if (!err.status || err.status >= 500) throw err;
-            editPage(req, res, e, { status: err.status, error: err.message });
+            editPage(req, res, e, { status: err.status, error: err.message, correcting: openCorrectionFor(e, (req.body || {}).correction_id) });
         }
     }));
 
@@ -364,7 +374,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
     router.post('/editor/corrections/:id', form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
         const b = req.body || {};
-        svc.resolveCorrection(req.params.id, { status: b.status, note: b.note || null }, req.actor);
+        svc.resolveCorrection(req.params.id, { status: b.status, note: b.note || null, correction_note: b.correction_note || null }, req.actor);
         res.redirect(303, '/editor#corrections');
     }));
 

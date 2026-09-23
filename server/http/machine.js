@@ -5,7 +5,8 @@
  *
  *   /robots.txt          crawl rules + sitemap location + explicit automated-consumer policy
  *   /sitemap.xml         sitemap index → /sitemaps/pages.xml, /sitemaps/entities-<n>.xml
- *   /feed.atom           published summaries (Atom), /feed.json (JSON Feed 1.1)
+ *   /feed.atom           published summaries (Atom), /feed.json (JSON Feed 1.1); one entry per published
+ *                        revision, so a correction is a new entry that starts with its note
  *   /llms.txt            orientation for language models
  */
 const express = require('express');
@@ -53,7 +54,8 @@ function createMachine({ svc, config }) {
             id: `tag:openvibe.reviews,2026:summary/${summary.id}/revision/${summary.published_revision}`,
             url: `${svc.entityUrl(entity)}#summary`,
             title: `${entity.name}: summary`,
-            summary: [rev.content || '', ...(rev.fields.pros || []).map((p) => `Pro: ${p.text}`), ...(rev.fields.cons || []).map((p) => `Con: ${p.text}`)].join('\n').slice(0, 1000),
+            summary: [rev.meta && rev.meta.correction ? `Correction: ${rev.meta.correction.note}` : null, rev.content || '', ...(rev.fields.pros || []).map((p) => `Pro: ${p.text}`), ...(rev.fields.cons || []).map((p) => `Con: ${p.text}`)]
+                .filter((x) => x != null).join('\n').slice(0, 1000),
             published: summary.revision_published_at,
             updated: summary.revision_published_at,
             tags: [entity.kind],
