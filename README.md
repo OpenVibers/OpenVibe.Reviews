@@ -193,7 +193,7 @@ by editors; signals arrive only from Sources.
 - OpenVibe.Community — discussion threads (`community.comment.write`)
 - OpenVibe.AI — optional, proposes summaries through `reviews.summary.propose`
 - OpenVibe.Search — consumes the index events
-- packages: openvibe-publishing v0.2.1, openvibe-contracts v0.32.0, openvibe-shared v1.5.0, openvibe-sdk v0.5.0
+- packages: openvibe-publishing v0.2.1, openvibe-contracts v0.33.0, openvibe-shared v1.5.1, openvibe-sdk v0.5.0
 
 ## Acceptance (tested in `test/`)
 
