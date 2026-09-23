@@ -21,7 +21,7 @@
  *   POST   /entities/:ref/split                      reviews.entity.split     { note? }
  *   POST   /trust                                    reviews.entity.manage    { scope, scope_id, key, value, note? }
  *   GET    /items?resolution=queue                   reviews.entity.resolve   items waiting for an editor
- *   GET    /items/:id                                reviews.entity.resolve
+ *   GET    /items/:id                                reviews.entity.resolve   410 item.removed once its source took it down
  *   POST   /items/:id/resolution                     reviews.entity.resolve   { entity, add_alias? } | { ignore: true, note? }   editor
  *   POST   /signals/import                           reviews.signal.import    { source_item_id }   fetch the item from Sources and apply it
  *   POST   /sources/sync                             reviews.signal.import    pull the next pages of review items from Sources
@@ -104,6 +104,8 @@ function createApi({ svc, viewers, platform, sync, config, log = console }) {
     router.get('/items/:id', guard('reviews.entity.resolve'), R((req) => {
         const row = svc.item(req.params.id);
         if (!row) throw new svc.ReviewsError(404, 'item.not_found', 'Reviews has not read that item');
+        // Taken down at its source: gone, like a deleted entity (its record stays for the audit).
+        if (row.state !== 'active') throw new svc.ReviewsError(410, 'item.removed', 'Its source removed this item');
         return { item: svc.itemView(row) };
     }));
     router.post('/items/:id/resolution', guard('reviews.entity.resolve'), R((req) => {
