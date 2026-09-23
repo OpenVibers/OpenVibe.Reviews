@@ -9,6 +9,8 @@
  *   { kind: 'service', service: 'svc:x', claims, subject }
  *       A Network client-credentials token for audience openvibe.reviews. It names the person it acts
  *       for in X-OV-Subject (usr_…); every route checks one capability against the token.
+ *       Developer-app (app:…) and module (mod:…) tokens act only for the person in their
+ *       on_behalf_of claim: X-OV-Subject naming anyone else is 403, and sandbox tokens are 401.
  *
  * Identity never comes from a body or a query. A request that presents a service token is judged
  * on that token alone: a bad one is refused, never downgraded to anonymous.
@@ -44,13 +46,26 @@ function createViewerResolver({ keys, config }) {
         if (!publicKey) throw new AuthError(503, 'identity.unavailable', 'the Network signing key is not loaded yet');
         const r = serviceAuth.verifyServiceToken(token, { publicKey, issuer: config.networkIssuer, audience: config.audience });
         if (!r.ok) throw new AuthError(401, r.code, r.reason);
+        // Developer apps (app:…) and modules (mod:…) are third parties: they act only for the person
+        // who authorized them (on_behalf_of), never for whoever X-OV-Subject names. Only first-party
+        // service principals (svc:…) are trusted to name the acting person.
+        const claims = r.claims;
+        const firstParty = claims.actor_type === 'service' && String(claims.sub).startsWith('svc:');
+        if (!firstParty && claims.env !== undefined && claims.env !== 'production') {
+            throw new AuthError(401, 'token.sandbox_refused', 'sandbox tokens are not accepted by openvibe.reviews');
+        }
         const header = req.get('x-ov-subject');
         let subject = null;
         if (header) {
             if (!ids.isSubjectId('user', header)) throw new AuthError(400, 'subject.invalid', 'X-OV-Subject must be a usr_… subject id');
+            if (!firstParty && header !== claims.on_behalf_of) {
+                throw new AuthError(403, 'subject.not_delegated', 'an app acts only for the person who authorized it (on_behalf_of)');
+            }
             subject = header;
+        } else if (!firstParty && ids.isSubjectId('user', claims.on_behalf_of)) {
+            subject = claims.on_behalf_of;
         }
-        return { kind: 'service', service: r.claims.sub, claims: r.claims, subject, staff: false };
+        return { kind: 'service', service: claims.sub, claims, subject, staff: false };
     }
 
     async function fromUserToken(token, { strict }) {
