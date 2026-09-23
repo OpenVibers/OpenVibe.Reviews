@@ -36,12 +36,21 @@ const MAX_POINT = 600;
 const MAX_OVERVIEW = 6000;
 const MIN_CORRECTION_NOTE = 10;
 const MAX_CORRECTION_NOTE = 2000;
+// Correction requests one person may send per rolling day (the per-IP limit is in server/app.js).
+const CORRECTIONS_PER_PERSON_DAY = 20;
+const DAY_MS = 24 * 3600 * 1000;
+const MAX_AUDIT_TEXT = 2000;
 // A summary is text with citations. Nothing in it can carry a score.
 const SUMMARY_KEYS = new Set(['overview', 'pros', 'cons', 'overview_signals', 'expected_revision', 'expectedRevision', 'message', 'publish', 'workflow', 'stub_provider', 'stubProvider', 'note', 'correction_note', 'correction_id']);
 const BODY_KEYS = ['overview', 'overview_signals', 'pros', 'cons'];
 const RATING_KEY_RE = /(rating|stars?|score|grade|verdict_value)/i;
-// Numeric ratings in AI text ("4.5/5", "8 out of 10", "★★★★"): AI output never states a rating.
-const RATING_TEXT_RE = /(\b\d+(?:[.,]\d+)?\s*(?:\/|out of)\s*(?:5|10|100)\b)|[★☆⭐]|\b\d+(?:[.,]\d+)?\s*stars?\b/i;
+// Numeric ratings in AI text ("4.5/5", "8 out of 10", "★★★★", "four and a half stars", "nine out of
+// ten"): AI output never states a rating.
+const NUMBER_WORD = '(?:zero|one|two|three|four|five|six|seven|eight|nine|ten)(?:[\\s-]+and[\\s-]+a[\\s-]+half)?';
+const RATING_TEXT_RE = new RegExp([
+    '(\\b\\d+(?:[.,]\\d+)?\\s*(?:\\/|out of)\\s*(?:5|10|100)\\b)', '[★☆⭐]', '\\b\\d+(?:[.,]\\d+)?\\s*stars?\\b',
+    `\\b${NUMBER_WORD}[\\s-]+stars?\\b`, `\\b${NUMBER_WORD}\\s+out\\s+of\\s+(?:five|ten|a\\s+hundred|one\\s+hundred|5|10|100)\\b`,
+].join('|'), 'i');
 
 const toIso = (ms) => (ms == null ? null : new Date(ms).toISOString());
 
@@ -130,6 +139,8 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         allSummaries: db.prepare('SELECT * FROM review_summaries ORDER BY updated_at DESC LIMIT 500'),
         publishedSummaries: db.prepare("SELECT * FROM review_summaries WHERE state = 'published' ORDER BY revision_published_at DESC LIMIT ?"),
         correction: db.prepare('SELECT * FROM review_corrections WHERE id = ?'),
+        correctionsSince: db.prepare('SELECT COUNT(*) AS n FROM review_corrections WHERE submitted_by = ? AND created_at > ?'),
+        sameOpenCorrection: db.prepare("SELECT id FROM review_corrections WHERE submitted_by = ? AND entity_id = ? AND status = 'open' AND body = ?"),
         insertCorrection: db.prepare(`INSERT INTO review_corrections (id, entity_id, target_type, target_id, body, evidence_url, submitted_by, via, created_at)
                                       VALUES (@id, @entity_id, @target_type, @target_id, @body, @evidence_url, @submitted_by, @via, @now)`),
         resolveCorrection: db.prepare("UPDATE review_corrections SET status = ?, resolved_by = ?, resolution_note = ?, resolved_at = ? WHERE id = ? AND status = 'open'"),
@@ -162,8 +173,15 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         if (!access.isEditor(actor)) fail(403, 'reviews.editor_required', `${what} is for Reviews editors`);
         return actorId(actor);
     }
+    // Audit rows are append-only and kept forever: no free text in one grows without bound.
+    function clipText(v, depth = 0) {
+        if (typeof v === 'string') return v.length > MAX_AUDIT_TEXT ? `${v.slice(0, MAX_AUDIT_TEXT)}…` : v;
+        if (Array.isArray(v)) return v.map((x) => clipText(x, depth + 1));
+        if (v && typeof v === 'object' && depth < 4) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, clipText(x, depth + 1)]));
+        return v;
+    }
     function audit(actor, action, entityId, target, detail = {}) {
-        q.audit.run(now(), typeof actor === 'string' ? actor : actorId(actor), action, entityId || null, target || null, JSON.stringify(detail));
+        q.audit.run(now(), typeof actor === 'string' ? actor : actorId(actor), action, entityId || null, target || null, JSON.stringify(clipText(detail)));
     }
     function emit(envelope) { return outbox.enqueue(envelope); }
 
@@ -905,7 +923,8 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         };
     }
 
-    function summaryRevisionView(summary, rev, canonicalId) {
+    /** `editor: false` (a reader): the person who wrote it is "an editor", as in the editorial log. */
+    function summaryRevisionView(summary, rev, canonicalId, { editor = true } = {}) {
         if (!rev) return null;
         const rec = rev.meta && rev.meta.authorship;
         const review = reviews.latest(summary.id, rev.number);
@@ -917,7 +936,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             review: review ? { decision: review.decision, reviewed_at: review.reviewedAt } : null,
             system: rev.meta && rev.meta.system ? rev.meta.system : null,
             correction: correctionView(rev),
-            author: rev.author, message: rev.message, created_at: rev.createdAt,
+            author: editor || !/^usr_/.test(String(rev.author)) ? rev.author : 'an editor', message: rev.message, created_at: rev.createdAt,
         };
     }
 
@@ -999,7 +1018,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                 summary: summary ? {
                     id: summary.id, state: summary.state, head_revision: revisions.headNumber(summary.id), flagged: !!summary.flagged, flag_reason: summary.flag_reason, flagged_at: toIso(summary.flagged_at),
                     published_at: toIso(summary.published_at), revision_published_at: toIso(summary.revision_published_at),
-                    published: pub ? summaryRevisionView(summary, pub, e.id) : null,
+                    published: pub ? summaryRevisionView(summary, pub, e.id, { editor }) : null,
                     pending: editor ? pendingRevisions(summary).map((p) => summaryRevisionView(summary, p.rev, e.id)) : pendingRevisions(summary).length,
                     history: publicHistory(summary),
                 } : null,
@@ -1018,7 +1037,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                 entity: entityView(e),
                 aggregates: q.aggregates.all(e.id, 200).map(aggregateView),
                 summary_revisions: summary ? revs.filter((r) => editor || publicRevision(summary, r))
-                    .map((r) => summaryRevisionView(summary, r, e.id)) : [],
+                    .map((r) => summaryRevisionView(summary, r, e.id, { editor })) : [],
                 merges: q.mergeLinksOf.all(e.id, e.id).map((l) => ({
                     id: l.id, from: entityView(q.entity.get(l.from_entity)), to: entityView(q.entity.get(l.to_entity)), note: l.note,
                     merged_at: toIso(l.created_at), merged_by: editor ? l.created_by : null, split_at: toIso(l.ended_at), split_by: editor ? l.ended_by : null, split_note: l.end_note,
@@ -1037,9 +1056,9 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             if (!summary) fail(404, 'summary.not_found', 'This entity has no summary');
             const rev = revisions.get(summary.id, Number(n));
             if (!rev) fail(404, 'revision.not_found', `No revision ${n}`);
-            const visible = access.isEditor(actor) || publicRevision(summary, rev);
-            if (!visible) fail(404, 'revision.not_found', `No revision ${n}`);
-            return summaryRevisionView(summary, rev, e.id);
+            const editor = access.isEditor(actor);
+            if (!editor && !publicRevision(summary, rev)) fail(404, 'revision.not_found', `No revision ${n}`);
+            return summaryRevisionView(summary, rev, e.id, { editor });
         },
 
         // Resolve (reviews.entity.resolve) ---------------------------------------------------
@@ -1535,9 +1554,14 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                 const e = entityOrFail(ref);
                 if (e.state === 'deleted') fail(410, 'entity.deleted', 'This entity was deleted');
                 const t = now();
+                const entityId = canonicalOf(e.id) || e.id;
+                // One person cannot bury the editors' queue: a daily allowance, and the same open request once.
+                if (q.sameOpenCorrection.get(actor.subject, entityId, text)) fail(409, 'correction.duplicate', 'You already sent this correction; it is waiting for an editor');
+                if (q.correctionsSince.get(actor.subject, t - DAY_MS).n >= CORRECTIONS_PER_PERSON_DAY) fail(429, 'correction.rate_limited', `At most ${CORRECTIONS_PER_PERSON_DAY} corrections a day; the editors will read the ones you sent`);
                 const id = `cor_${ulid(t)}`;
-                q.insertCorrection.run({ id, entity_id: canonicalOf(e.id) || e.id, target_type: targetType, target_id: targetId ? String(targetId).slice(0, 100) : null, body: text, evidence_url: url, submitted_by: actor.subject, via: actor.kind === 'service' ? actor.service : null, now: t });
-                audit(actor, 'correction.submitted', canonicalOf(e.id) || e.id, id, { target_type: targetType, target_id: targetId });
+                const target = targetId ? String(targetId).slice(0, 100) : null;
+                q.insertCorrection.run({ id, entity_id: entityId, target_type: targetType, target_id: target, body: text, evidence_url: url ? url.slice(0, 2000) : null, submitted_by: actor.subject, via: actor.kind === 'service' ? actor.service : null, now: t });
+                audit(actor, 'correction.submitted', entityId, id, { target_type: targetType, target_id: target });
                 return q.correction.get(id);
             });
         },

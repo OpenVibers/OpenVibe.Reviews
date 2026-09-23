@@ -39,7 +39,7 @@
  */
 const express = require('express');
 const contracts = require('openvibe-contracts');
-const { actorMiddleware, guard, run } = require('./common');
+const { actorMiddleware, guard, run, crossSite } = require('./common');
 const { checkCapability } = require('../auth/capabilities');
 
 const { http } = contracts;
@@ -49,6 +49,14 @@ function createApi({ svc, viewers, platform, sync, config, log = console }) {
     router.use(http.middleware());
     router.use(express.json({ limit: '256kb' }));
     router.use((err, req, res, next) => (err ? http.sendProblem(res, 400, 'request.invalid_json', { detail: 'Malformed JSON body', ctx: req.ov }) : next()));
+    // The API also accepts the ov_token cookie: a write carried by it that another site started is
+    // refused (SameSite=Lax is the first line; Bearer tokens are never sent by a browser on its own).
+    const origin = new URL(config.baseUrl).origin;
+    router.use((req, res, next) => {
+        if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || req.headers.authorization || !(req.cookies && req.cookies.ov_token)) return next();
+        if (!crossSite(req, origin)) return next();
+        http.sendProblem(res, 403, 'request.cross_site', { detail: 'A write with the session cookie from another site is not accepted', ctx: req.ov });
+    });
     router.use(actorMiddleware(viewers));
     const R = (fn, status) => run(fn, status, log);
     const body = (req) => (req.body && typeof req.body === 'object' ? req.body : {});

@@ -300,7 +300,7 @@ ${pending.length ? html`<ul>${pending.map((x) => html`<li><a href="${epath(x.ent
 <h2 id="flagged">Flagged summaries</h2>
 ${flagged.length ? html`<ul>${flagged.map((s) => html`<li><a href="${epath(s.entity)}">${s.entity.name}</a>: ${s.flag_reason}</li>`)}</ul>` : html`<p class="rv-muted">None.</p>`}
 <h2 id="corrections">Open corrections</h2>
-${corrections.length ? html`<ul>${corrections.map((c) => html`<li><a href="${epath(c.entity)}">${c.entity.name}</a> · ${c.target_type}${c.target_id ? ` ${c.target_id}` : ''} · ${t(c.created_at)}<blockquote>${c.body}</blockquote>${safeUrl(c.evidence_url) ? html`<a href="${safeUrl(c.evidence_url)}" rel="nofollow noopener">evidence</a>` : ''}
+${corrections.length ? html`<ul>${corrections.map((c) => html`<li><a href="${epath(c.entity)}">${c.entity.name}</a> · ${c.target_type}${c.target_id ? ` ${c.target_id}` : ''} · ${t(c.created_at)}<blockquote>${c.body}</blockquote>${safeUrl(c.evidence_url) ? html`<a href="${safeUrl(c.evidence_url)}" rel="nofollow ugc noopener noreferrer">evidence</a> <span class="rv-muted">(sent by the reader; not checked)</span>` : ''}
 <form method="post" action="/editor/corrections/${e(c.id)}" class="rv-form">
 ${c.summary_published ? html`<label>Correction note, published with a new summary revision (required to accept) <input type="text" name="correction_note" maxlength="2000"></label>
 <p class="rv-muted">Accepting publishes the current summary text again as a correction revision with this note. To change the text as well, <a href="${epath(c.entity)}/edit?correction=${e(c.id)}#summary-form">correct the summary</a>.</p>` : ''}
@@ -363,7 +363,7 @@ ${correcting ? html`<div class="rv-notice rv-correction"><p>Correcting the summa
 <label>The overview cites ${sel('overview_signals', ov ? ov.citations.filter((c) => c.ok).map((c) => c.signal_id) : [])}</label>
 <fieldset><legend>Pros</legend>${rows('pro', pros)}</fieldset>
 <fieldset><legend>Cons</legend>${rows('con', cons)}</fieldset>
-<label>Revision note <input type="text" name="message" maxlength="500"></label>
+<label>Revision note (public: shown in the summary's history) <input type="text" name="message" maxlength="500"></label>
 ${cur ? html`<label>Correction note (public; fill it in only to correct the published summary: the revision is published at once and the note stays in its history) <input type="text" name="correction_note" maxlength="2000"${correcting ? raw(' required minlength="10"') : ''}></label>` : ''}
 <input type="hidden" name="expected_revision" value="${String(p.summary ? p.summary.head_revision : 0)}">
 <button type="submit" name="publish" value="0">Save</button> <button type="submit" name="publish" value="1">Save and publish</button></form>

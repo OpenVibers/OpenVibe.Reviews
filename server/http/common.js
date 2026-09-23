@@ -35,6 +35,19 @@ function guard(capabilityId) {
     };
 }
 
+/**
+ * A write another site started (CSRF), judged from what the browser says: Sec-Fetch-Site other than
+ * same-origin (or none: typed by the person), or an Origin other than ours. `Origin: null` alone is
+ * not proof (privacy settings send it for same-origin posts); a browser that sends Sec-Fetch-Site
+ * says what it really was.
+ */
+function crossSite(req, origin) {
+    const site = req.get('sec-fetch-site');
+    if (site && site !== 'same-origin' && site !== 'none') return true;
+    const o = req.get('origin');
+    return !!(o && o !== 'null' && o !== origin);
+}
+
 /** Service errors → problem+json. */
 function sendError(res, req, err, log = console) {
     const status = err && Number.isInteger(err.status) ? err.status : 500;
@@ -56,4 +69,4 @@ function run(fn, status = 200, log = console) {
     };
 }
 
-module.exports = { actorMiddleware, guard, sendError, run };
+module.exports = { actorMiddleware, guard, sendError, run, crossSite };

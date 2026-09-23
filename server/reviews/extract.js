@@ -72,6 +72,17 @@ function keptTitle(item) {
     return item && item.kind === 'product' && item.title ? String(item.title).slice(0, 300) : null;
 }
 
+/**
+ * Why a stated rating cannot be counted on its own scale, or null. Below the stated worst (or below
+ * zero when no worst is stated) or above the best is not an opinion the aggregate can use.
+ */
+function outOfScale(r) {
+    if (r.best != null && (r.best <= 0 || r.value > r.best)) return `rating ${r.value} is outside the stated scale (best ${r.best})`;
+    if (r.worst != null && r.value < r.worst) return `rating ${r.value} is outside the stated scale (worst ${r.worst})`;
+    if (r.worst == null && r.value < 0) return `rating ${r.value} is below zero and the source states no scale minimum`;
+    return null;
+}
+
 function trustOf(fields) {
     const out = {};
     for (const k of TRUST_FIELDS) if (fields[k] !== undefined && fields[k] !== null) out[k] = fields[k];
@@ -101,13 +112,13 @@ function extractSignal(item) {
         if (!r || r.value == null) return { signal: null, note: 'the product states no aggregate rating' };
         const n = r.count != null && r.count > 0 ? r.count : (r.review_count != null && r.review_count > 0 ? r.review_count : null);
         if (n == null) return { signal: null, note: 'the aggregate rating states no number of ratings' };
-        if (r.best != null && (r.best <= 0 || r.value > r.best)) return { signal: null, note: `rating ${r.value} is outside the stated scale (best ${r.best})` };
+        if (outOfScale(r)) return { signal: null, note: outOfScale(r) };
         return { signal: { type: 'rating_aggregate', rating_value: r.value, rating_best: r.best, rating_worst: r.worst, rating_count: n, trust }, note: null };
     }
     if (item.kind === 'review') {
         const r = f.rating;
         if (!r || r.value == null) return { signal: null, note: 'the review states no rating' };
-        if (r.best != null && (r.best <= 0 || r.value > r.best)) return { signal: null, note: `rating ${r.value} is outside the stated scale (best ${r.best})` };
+        if (outOfScale(r)) return { signal: null, note: outOfScale(r) };
         return { signal: { type: 'rating', rating_value: r.value, rating_best: r.best, rating_worst: r.worst, rating_count: 1, trust }, note: null };
     }
     return { signal: null, note: `items of kind "${item.kind}" carry no review signal` };

@@ -25,7 +25,7 @@ const seo = require('openvibe-publishing/seo');
 const { renderPage } = require('../render/layout');
 const views = require('../render/views');
 const { ratingForStructuredData } = require('../reviews/aggregate');
-const { actorMiddleware } = require('./common');
+const { actorMiddleware, crossSite } = require('./common');
 
 const SCHEMA_TYPE = { product: 'Product', game: 'VideoGame', software: 'SoftwareApplication', service: 'Service', place: 'Place', organization: 'Organization', media: 'CreativeWork', other: 'Thing' };
 
@@ -90,10 +90,8 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
     const origin = new URL(config.baseUrl).origin;
     // Cross-site form posts are refused (the session cookie is SameSite=Lax as well).
     router.use((req, res, next) => {
-        if (req.method !== 'POST') return next();
-        const o = req.get('origin');
-        if (o && o !== origin && o !== 'null') return res.status(403).type('text/plain').set('Cache-Control', 'private, no-store').send('Cross-site form posts are not accepted.');
-        next();
+        if (req.method !== 'POST' || !crossSite(req, origin)) return next();
+        res.status(403).type('text/plain').set('Cache-Control', 'private, no-store').send('Cross-site form posts are not accepted.');
     });
 
     const send = (req, res, status, body, o = {}) => {
@@ -155,7 +153,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         const e = locate(req, res, '.json');
         if (!e) return;
         const p = svc.page(e, req.actor);
-        res.status(200).set('Cache-Control', req.actor.kind === 'anonymous' ? 'public, max-age=60' : 'private, no-store').set('X-Robots-Tag', p.decision.robots)
+        res.status(200).set('Cache-Control', req.actor.kind === 'anonymous' ? 'public, max-age=60' : 'private, no-store').set('Vary', 'Cookie, Authorization').set('X-Robots-Tag', p.decision.robots)
             .json({ ...p, decision: { indexable: p.decision.indexable, robots: p.decision.robots, reasons: p.decision.codes } });
     });
 

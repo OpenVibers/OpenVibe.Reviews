@@ -255,6 +255,7 @@ CREATE TABLE IF NOT EXISTS review_corrections (
 );
 CREATE INDEX IF NOT EXISTS review_corrections_status ON review_corrections (status, created_at);
 CREATE INDEX IF NOT EXISTS review_corrections_entity ON review_corrections (entity_id, status);
+CREATE INDEX IF NOT EXISTS review_corrections_by ON review_corrections (submitted_by, created_at);
 
 CREATE TABLE IF NOT EXISTS review_audit (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
