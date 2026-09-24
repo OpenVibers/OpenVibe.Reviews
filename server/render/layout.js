@@ -2,7 +2,7 @@
 /**
  * Page shell: every page is server-rendered through this. The <head> SEO block comes from
  * openvibe-shared/seo (robots always explicit: from the indexability gate for entity pages,
- * noindex for editing surfaces), the shared chrome from openvibe-shared (app icon, SSR footer, a
+ * noindex for editing surfaces), the OpenVibe Frame from openvibe-shared (app icon, SSR footer, a
  * <noscript> navigation) plus the Network's navbar.js/footer.js as progressive enhancement.
  * Nothing on the page needs JavaScript to be read, navigated, corrected or edited.
  */
@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const sharedSeo = require('openvibe-shared/seo');
 const appIcon = require('openvibe-shared/app-icon');
-const chrome = require('openvibe-shared/chrome-ssr');
+const frame = require('openvibe-shared/frame');
 const { escapeHtml: esc } = require('openvibe-publishing/ssr');
 
 const SITE_NAME = 'OpenVibe.Reviews';
@@ -43,6 +43,7 @@ function navConfig(o, config) {
         silentLogin: `${config.baseUrl}/auth/login?silent=1&next={url}`,
         sessionUrl: '/auth/me',
         loginUrl: `/auth/login?next=${encodeURIComponent(o.path || '/')}`,
+        logoutUrl: '/auth/logout?next={path}',   // Sign out in the shared navbar ends this site's session too
     };
 }
 
@@ -82,16 +83,17 @@ ${feeds.map((f) => `<link rel="alternate" type="${f.type}" title="${esc(f.title)
 <body>
 <a class="rv-skip" href="#main">Skip to content</a>
 <div id="navbar-mount"></div>
-${chrome.noscriptNav({ name: SITE_NAME, home: '/', links: LINKS.map((l) => ({ label: l.label, href: l.href })) })}
-<header class="rv-bar"><a class="rv-brand" href="/">${SITE_NAME}</a><form class="rv-search" action="/search" method="get" role="search"><label for="rv-q" class="rv-sr">Search entities</label><input id="rv-q" name="q" type="search" placeholder="Search entities" value="${esc(o.query || '')}"><button type="submit">Search</button></form><span class="rv-account">${who}</span></header>
+${frame.noscriptNav({ name: SITE_NAME, home: '/', links: LINKS.map((l) => ({ label: l.label, href: l.href })) })}
+<header class="rv-bar"><a class="rv-brand" href="/">${SITE_NAME}</a><form class="rv-search" action="/search" method="get" role="search"><label for="rv-q" class="rv-sr">Search entities</label><input id="rv-q" name="q" type="search" placeholder="Search entities" value="${esc(o.query || '')}"><button type="submit">Search</button></form><noscript><span class="rv-account">${who}</span></noscript></header>
 <main id="main" class="rv-main">
 ${o.body || ''}
+${o.path === '/' ? frame.shipped({ service: 'reviews', title: `Recently shipped on ${SITE_NAME}` }) : ''}
 </main>
-${chrome.footer({ service: 'reviews', variant: 'full' })}
+${frame.footer({ service: 'reviews', variant: 'full', updates: '/updates' })}
 <script>
-window.__OV_PAGE = ${JSON.stringify({ navbar: navConfig(o, config), footer: { service: 'reviews', variant: 'full', mount: '#ov-footer', brandName: SITE_NAME } }).replace(/</g, '\\u003c')};
+window.__OV_PAGE = ${JSON.stringify({ navbar: navConfig(o, config), footer: { service: 'reviews', variant: 'full', mount: '#ov-footer', brandName: SITE_NAME, updates: '/updates' } }).replace(/</g, '\\u003c')};
 document.addEventListener('DOMContentLoaded', function () {
-  try { if (window.OpenVibeNavbar) OpenVibeNavbar.init(window.__OV_PAGE.navbar); } catch (e) { /* chrome is optional */ }
+  try { if (window.OpenVibeNavbar) OpenVibeNavbar.init(window.__OV_PAGE.navbar); } catch (e) { /* the Frame is optional */ }
   try { if (window.OpenVibeFooter) OpenVibeFooter.init(window.__OV_PAGE.footer); } catch (e) { /* */ }
 });
 </script>
