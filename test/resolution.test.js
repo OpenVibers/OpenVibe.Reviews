@@ -82,8 +82,10 @@ t('API identity: bad tokens are refused, never downgraded; editor actions need a
         assert.strictEqual(svc.status, 403);
         const asEditor = await req(h, 'POST', '/api/v1/entities', { token: serviceToken({ cap: ['reviews.entity.manage'] }), headers: { 'X-OV-Subject': require('./helpers').EDITOR }, body: { name: 'Made For An Editor', kind: 'software' } });
         assert.strictEqual(asEditor.status, 201, asEditor.text);
-        const staff = await req(h, 'POST', '/api/v1/entities', { token: require('./helpers').userToken({ role: 'global_mod' }), body: { name: 'Made By Staff' } });
-        assert.strictEqual(staff.status, 201);
+        const staff = await req(h, 'POST', '/api/v1/entities', { token: require('./helpers').userToken({ role: 'admin' }), body: { name: 'Made By Staff' } });
+        assert.strictEqual(staff.status, 201, 'staff.editorial.manage (admin) edits');
+        const mod = await req(h, 'POST', '/api/v1/entities', { token: require('./helpers').userToken({ role: 'global_mod' }), body: { name: 'Made By A Mod' } });
+        assert.strictEqual(mod.status, 403, 'a global_mod moderates, it does not edit');
         const ready = await req(h, 'GET', '/api/ready');
         assert.strictEqual(ready.status, 200);
         assert.strictEqual(ready.json.ready, true);

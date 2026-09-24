@@ -5,7 +5,7 @@
  *   { kind: 'anonymous', subject: null }
  *   { kind: 'user', subject: 'usr_…'|null, staff, user }
  *       A browser or client with the Network user JWT (ov_token cookie or Bearer), verified offline
- *       (RS256, issuer, audience). role admin/global_mod makes the person staff.
+ *       (RS256, issuer, audience). staff = the contracts staff map's staff.editorial.manage (ADR-022).
  *   { kind: 'service', service: 'svc:x', claims, subject }
  *       A Network client-credentials token for audience openvibe.reviews. It names the person it acts
  *       for in X-OV-Subject (usr_…); every route checks one capability against the token.
@@ -18,8 +18,7 @@
 const contracts = require('openvibe-contracts');
 const { verifyUserToken } = require('openvibe-sdk/auth');
 
-const { ids, serviceAuth } = contracts;
-const STAFF_ROLES = new Set(['admin', 'global_mod']);
+const { ids, serviceAuth, staff: staffMap } = contracts;
 const PRINCIPAL_SUB = /^(svc|app|mod):/;
 const ACCESS_COOKIE = 'ov_token';
 
@@ -83,7 +82,7 @@ function createViewerResolver({ keys, config }) {
         }
         const subject = ids.isSubjectId('user', claims.subject_id) ? claims.subject_id : null;
         return {
-            kind: 'user', subject, staff: STAFF_ROLES.has(claims.role),
+            kind: 'user', subject, staff: staffMap.can(claims, 'staff.editorial.manage'),
             user: { username: claims.username || null, display_name: claims.display_name || claims.username || null, avatar_url: claims.avatar_url || null, role: claims.role || null, subject_id: subject },
         };
     }
@@ -110,4 +109,4 @@ function createViewerResolver({ keys, config }) {
     return { resolve };
 }
 
-module.exports = { createViewerResolver, AuthError, ANONYMOUS, ACCESS_COOKIE, STAFF_ROLES };
+module.exports = { createViewerResolver, AuthError, ANONYMOUS, ACCESS_COOKIE };
