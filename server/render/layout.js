@@ -7,6 +7,7 @@
  * Nothing on the page needs JavaScript to be read, navigated, corrected or edited.
  */
 const crypto = require('crypto');
+const ovServe = require('openvibe-shared/serve');
 const fs = require('fs');
 const path = require('path');
 const sharedSeo = require('openvibe-shared/seo');
@@ -76,9 +77,9 @@ ${head}
 ${appIcon.headTags({ site: 'network' })}
 ${feeds.map((f) => `<link rel="alternate" type="${f.type}" title="${esc(f.title)}" href="${f.href}">`).join('\n')}
 <link rel="stylesheet" href="${asset('css/reviews.css')}">
-<script src="${NETWORK_URL}/shared/theme-loader.js" defer></script>
-<script src="${NETWORK_URL}/shared/navbar.js" defer></script>
-<script src="${NETWORK_URL}/shared/footer.js" defer></script>
+<script src="${ovServe.url('theme-loader.js')}" defer></script>
+<script src="${ovServe.url('navbar.js')}" defer></script>
+<script src="${ovServe.url('footer.js')}" defer></script>
 </head>
 <body>
 <a class="rv-skip" href="#main">Skip to content</a>

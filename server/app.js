@@ -106,6 +106,8 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
     app.use('/api/v1', createApi({ svc, viewers, platform, sync, config, log }));
     app.use('/api', (req, res) => http.sendProblem(res, 404, 'route.not_found', { detail: 'Not found' }));
 
+    // This site's own pinned copy of the OpenVibe Frame's browser files (openvibe-shared/serve).
+    app.use('/shared', require('openvibe-shared/serve').handler());
     app.use(express.static(PUBLIC_DIR, {
         index: false, redirect: false,
         setHeaders(res) { res.setHeader('Cache-Control', res.req && res.req.query && res.req.query.v ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'); },

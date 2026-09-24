@@ -21,6 +21,7 @@
  * one 410; an old slug 301 to the current one.
  */
 const express = require('express');
+const ovServe = require('openvibe-shared/serve');
 const frame = require('openvibe-shared/frame');
 const seo = require('openvibe-publishing/seo');
 const { renderPage } = require('../render/layout');
@@ -145,7 +146,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         });
     });
     // What shipped on OpenVibe.Reviews: the shared update log every OpenVibe site has.
-    router.get('/updates', (req, res) => send(req, res, 200, frame.updatesBody({ service: 'reviews', siteName: 'OpenVibe.Reviews' }) + frame.shippedScript(), { title: 'What shipped on OpenVibe.Reviews', robots: 'index, follow', cache: 'public', path: '/updates' }));
+    router.get('/updates', (req, res) => send(req, res, 200, frame.updatesBody({ service: 'reviews', siteName: 'OpenVibe.Reviews' }) + `<script src="${ovServe.url('shipped.js')}" defer></script>`, { title: 'What shipped on OpenVibe.Reviews', robots: 'index, follow', cache: 'public', path: '/updates' }));
     router.get('/about', (req, res) => send(req, res, 200, views.aboutPage(), { title: 'How it works', robots: 'index, follow', cache: 'public', active: 'about' }));
     router.get('/search', (req, res) => {
         const query = String(req.query.q || '').slice(0, 200);
