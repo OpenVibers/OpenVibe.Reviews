@@ -28,6 +28,8 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy);
+    // One W3C trace across services (openvibe-shared/trace): calls made while serving a request carry its traceparent.
+    require('openvibe-shared/trace').install(app);
 
     const release = require('openvibe-shared/release').createRelease({ service: 'reviews', root: path.join(__dirname, '..') });
     const metrics = require('openvibe-shared/metrics').instrument(app, { service: 'reviews', release: release.release });
