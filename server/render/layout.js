@@ -29,6 +29,8 @@ function asset(rel) {
     }
     return `/${rel}?v=${hashes.get(rel)}`;
 }
+/** The ?v= this process renders for a public/ file (the static route caches only that one as immutable). */
+function assetVersion(rel) { asset(rel); return hashes.get(rel); }
 
 const LINKS = [
     { label: 'Entities', href: '/', key: 'home' },
@@ -102,4 +104,4 @@ document.addEventListener('DOMContentLoaded', function () {
 </html>`;
 }
 
-module.exports = { renderPage, asset, SITE_NAME, DEFAULT_DESCRIPTION, NETWORK_URL };
+module.exports = { renderPage, asset, SITE_NAME, DEFAULT_DESCRIPTION, NETWORK_URL, assetVersion };

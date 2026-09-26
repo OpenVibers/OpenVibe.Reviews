@@ -111,7 +111,13 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
     app.use('/shared', require('openvibe-shared/serve').handler());
     app.use(express.static(PUBLIC_DIR, {
         index: false, redirect: false,
-        setHeaders(res) { res.setHeader('Cache-Control', res.req && res.req.query && res.req.query.v ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'); },
+        // Immutable only when ?v= is the hash of the bytes served: an older page's URL after a deploy (or a
+        // rollback) gets the current file with a short cache, never pinned for a year (WS-P task 10).
+        setHeaders(res, filePath) {
+            const v = res.req && res.req.query && res.req.query.v;
+            const rel = path.relative(PUBLIC_DIR, filePath).split(path.sep).join('/');
+            res.setHeader('Cache-Control', v && v === require('./render/layout').assetVersion(rel) ? 'public, max-age=31536000, immutable' : 'public, max-age=300');
+        },
     }));
     app.use(createMachine({ svc, config }));
 
