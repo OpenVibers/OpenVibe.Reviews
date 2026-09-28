@@ -66,70 +66,70 @@ function createApi({ svc, viewers, platform, sync, config, log = console, limits
     const R = (fn, status) => run(fn, status, log);
     const body = (req) => (req.body && typeof req.body === 'object' ? req.body : {});
 
-    function live(ref) {
-        const e = svc.entity(ref);
+    async function live(ref) {
+        const e = await svc.entity(ref);
         if (e.state === 'deleted') throw new svc.ReviewsError(410, 'entity.deleted', 'This entity was deleted');
-        if (e.state === 'merged') throw new svc.ReviewsError(409, 'entity.merged', `Merged into ${svc.canonicalOf(e.id)}`, { canonical_id: svc.canonicalOf(e.id) });
+        if (e.state === 'merged') throw new svc.ReviewsError(409, 'entity.merged', `Merged into ${await svc.canonicalOf(e.id)}`, { canonical_id: await svc.canonicalOf(e.id) });
         return e;
     }
 
-    router.get('/entities', guard('reviews.entity.resolve'), R((req) => {
+    router.get('/entities', guard('reviews.entity.resolve'), R(async (req) => {
         const text = String(req.query.q || '').trim();
-        if (text) return { entities: svc.search(text, { limit: Number(req.query.limit) || 30 }).map(svc.entityView) };
-        const out = svc.listEntities({ limit: Number(req.query.limit) || 50, offset: Number(req.query.offset) || 0 });
-        return { entities: out.entities.map(svc.entityView), total: out.total };
+        if (text) return { entities: (await Promise.all((await svc.search(text, { limit: Number(req.query.limit) || 30 })).map(svc.entityView))) };
+        const out = await svc.listEntities({ limit: Number(req.query.limit) || 50, offset: Number(req.query.offset) || 0 });
+        return { entities: (await Promise.all(out.entities.map(svc.entityView))), total: out.total };
     }));
     // A lookup, not a write: counted like a read, in the same budget.
-    router.post('/resolve', guard('reviews.entity.resolve'), limits.lookup('reviews.read'), R((req) => svc.resolve(body(req))));
-    router.get('/entities/:ref', guard('reviews.entity.resolve'), R((req) => {
-        const e = svc.entity(req.params.ref);
-        if (e.state !== 'active') return { entity: svc.entityView(e), canonical: e.state === 'merged' ? svc.entityView(svc.entityById(svc.canonicalOf(e.id))) : null };
-        const p = svc.page(e, req.actor);
+    router.post('/resolve', guard('reviews.entity.resolve'), limits.lookup('reviews.read'), R(async (req) => await svc.resolve(body(req))));
+    router.get('/entities/:ref', guard('reviews.entity.resolve'), R(async (req) => {
+        const e = await svc.entity(req.params.ref);
+        if (e.state !== 'active') return { entity: await svc.entityView(e), canonical: e.state === 'merged' ? await svc.entityView(await svc.entityById(await svc.canonicalOf(e.id))) : null };
+        const p = await svc.page(e, req.actor);
         return { ...p, decision: { indexable: p.decision.indexable, robots: p.decision.robots, reasons: p.decision.codes } };
     }));
-    router.get('/entities/:ref/history', guard('reviews.entity.resolve'), R((req) => svc.history(svc.entity(req.params.ref), req.actor)));
-    router.get('/entities/:ref/aggregate', guard('reviews.entity.resolve'), R((req) => {
-        const e = live(req.params.ref);
-        const p = svc.page(e, req.actor);
+    router.get('/entities/:ref/history', guard('reviews.entity.resolve'), R(async (req) => await svc.history(await svc.entity(req.params.ref), req.actor)));
+    router.get('/entities/:ref/aggregate', guard('reviews.entity.resolve'), R(async (req) => {
+        const e = await live(req.params.ref);
+        const p = await svc.page(e, req.actor);
         return { entity_id: e.id, aggregate: p.aggregate, aggregate_revision: p.aggregate_revision };
     }));
 
-    router.post('/entities', guard('reviews.entity.manage'), B('reviews.entity.manage'), R((req) => {
-        const out = svc.createEntity(body(req), req.actor);
-        return { entity: svc.entityView(out.entity), settled_items: out.settled_items };
+    router.post('/entities', guard('reviews.entity.manage'), B('reviews.entity.manage'), R(async (req) => {
+        const out = await svc.createEntity(body(req), req.actor);
+        return { entity: await svc.entityView(out.entity), settled_items: out.settled_items };
     }, 201));
-    router.patch('/entities/:ref', guard('reviews.entity.manage'), B('reviews.entity.manage'), R((req) => ({ entity: svc.entityView(svc.updateEntity(req.params.ref, body(req), req.actor)) })));
-    router.delete('/entities/:ref', guard('reviews.entity.manage'), B('reviews.entity.manage'), R((req) => ({ entity: svc.entityView(svc.deleteEntity(req.params.ref, body(req), req.actor)) })));
-    router.post('/entities/:ref/aliases', guard('reviews.entity.manage'), B('reviews.entity.manage'), R((req) => svc.addAlias(req.params.ref, body(req), req.actor), 201));
-    router.delete('/entities/:ref/aliases/:id', guard('reviews.entity.manage'), B('reviews.entity.manage'), R((req) => ({ alias: svc.removeAlias(req.params.ref, req.params.id, req.actor) })));
-    router.post('/entities/:ref/links', guard('reviews.entity.manage'), B('reviews.entity.manage'), R((req) => ({ link: svc.addLink(req.params.ref, body(req), req.actor) }), 201));
-    router.delete('/entities/:ref/links/:id', guard('reviews.entity.manage'), B('reviews.entity.manage'), R((req) => ({ link: svc.endLink(req.params.ref, req.params.id, body(req), req.actor) })));
-    router.post('/entities/:ref/merge', guard('reviews.entity.merge'), B('reviews.entity.merge'), R((req) => {
-        const out = svc.merge(req.params.ref, body(req), req.actor);
-        return { link: out.link, entity: svc.entityView(out.entity), into: svc.entityView(out.into), signals: out.signals };
+    router.patch('/entities/:ref', guard('reviews.entity.manage'), B('reviews.entity.manage'), R(async (req) => ({ entity: await svc.entityView(await svc.updateEntity(req.params.ref, body(req), req.actor)) })));
+    router.delete('/entities/:ref', guard('reviews.entity.manage'), B('reviews.entity.manage'), R(async (req) => ({ entity: await svc.entityView(await svc.deleteEntity(req.params.ref, body(req), req.actor)) })));
+    router.post('/entities/:ref/aliases', guard('reviews.entity.manage'), B('reviews.entity.manage'), R(async (req) => await svc.addAlias(req.params.ref, body(req), req.actor), 201));
+    router.delete('/entities/:ref/aliases/:id', guard('reviews.entity.manage'), B('reviews.entity.manage'), R(async (req) => ({ alias: await svc.removeAlias(req.params.ref, req.params.id, req.actor) })));
+    router.post('/entities/:ref/links', guard('reviews.entity.manage'), B('reviews.entity.manage'), R(async (req) => ({ link: await svc.addLink(req.params.ref, body(req), req.actor) }), 201));
+    router.delete('/entities/:ref/links/:id', guard('reviews.entity.manage'), B('reviews.entity.manage'), R(async (req) => ({ link: await svc.endLink(req.params.ref, req.params.id, body(req), req.actor) })));
+    router.post('/entities/:ref/merge', guard('reviews.entity.merge'), B('reviews.entity.merge'), R(async (req) => {
+        const out = await svc.merge(req.params.ref, body(req), req.actor);
+        return { link: out.link, entity: await svc.entityView(out.entity), into: await svc.entityView(out.into), signals: out.signals };
     }));
-    router.post('/entities/:ref/split', guard('reviews.entity.split'), B('reviews.entity.merge'), R((req) => {
-        const out = svc.split(req.params.ref, body(req), req.actor);
-        return { link: out.link, entity: svc.entityView(out.entity), from: out.from ? svc.entityView(out.from) : null, signals: out.signals };
+    router.post('/entities/:ref/split', guard('reviews.entity.split'), B('reviews.entity.merge'), R(async (req) => {
+        const out = await svc.split(req.params.ref, body(req), req.actor);
+        return { link: out.link, entity: await svc.entityView(out.entity), from: out.from ? await svc.entityView(out.from) : null, signals: out.signals };
     }));
-    router.post('/trust', guard('reviews.entity.manage'), B('reviews.entity.manage'), R((req) => svc.setTrust(body(req), req.actor)));
+    router.post('/trust', guard('reviews.entity.manage'), B('reviews.entity.manage'), R(async (req) => await svc.setTrust(body(req), req.actor)));
 
-    router.get('/items', guard('reviews.entity.resolve'), R((req) => {
+    router.get('/items', guard('reviews.entity.resolve'), R(async (req) => {
         if (!svc.access.isEditor(req.actor)) throw new svc.ReviewsError(403, 'reviews.editor_required', 'The resolution queue is for Reviews editors');
-        return { items: svc.resolutionQueue(Number(req.query.limit) || 200).map(svc.itemView) };
+        return { items: (await Promise.all((await svc.resolutionQueue(Number(req.query.limit) || 200)).map(svc.itemView))) };
     }));
-    router.get('/items/:id', guard('reviews.entity.resolve'), R((req) => {
-        const row = svc.item(req.params.id);
+    router.get('/items/:id', guard('reviews.entity.resolve'), R(async (req) => {
+        const row = await svc.item(req.params.id);
         if (!row) throw new svc.ReviewsError(404, 'item.not_found', 'Reviews has not read that item');
         // Taken down at its source: gone, like a deleted entity (its record stays for the audit).
         if (row.state !== 'active') throw new svc.ReviewsError(410, 'item.removed', 'Its source removed this item');
-        return { item: svc.itemView(row) };
+        return { item: await svc.itemView(row) };
     }));
-    router.post('/items/:id/resolution', guard('reviews.entity.resolve'), B('reviews.item.resolve'), R((req) => {
+    router.post('/items/:id/resolution', guard('reviews.entity.resolve'), B('reviews.item.resolve'), R(async (req) => {
         const b = body(req);
-        if (b.ignore === true) return { item: svc.itemView(svc.ignoreItem(req.params.id, b, req.actor)) };
-        const out = svc.confirmResolution(req.params.id, b, req.actor);
-        return { item: svc.itemView(out.item), signal: out.signal ? svc.signalView(out.signal) : null, settled_items: out.settled_items };
+        if (b.ignore === true) return { item: await svc.itemView(await svc.ignoreItem(req.params.id, b, req.actor)) };
+        const out = await svc.confirmResolution(req.params.id, b, req.actor);
+        return { item: await svc.itemView(out.item), signal: out.signal ? await svc.signalView(out.signal) : null, settled_items: out.settled_items };
     }));
 
     router.post('/signals/import', guard('reviews.signal.import'), B('reviews.signal.import'), R(async (req) => {
@@ -137,7 +137,7 @@ function createApi({ svc, viewers, platform, sync, config, log = console, limits
         if (a.kind === 'anonymous' || (a.kind === 'user' && !svc.access.isEditor(a))) throw new svc.ReviewsError(403, 'reviews.editor_required', 'Importing is for Reviews editors and granted services');
         const b = body(req);
         const out = await svc.importItem(b.source_item_id || b.item_id, platform.sources, a);
-        return { outcome: out.outcome, item: svc.itemView(out.item), signal: out.signal ? svc.signalView(out.signal) : null };
+        return { outcome: out.outcome, item: await svc.itemView(out.item), signal: out.signal ? await svc.signalView(out.signal) : null };
     }));
     router.post('/sources/sync', guard('reviews.signal.import'), B('reviews.sources.sync'), R(async (req) => {
         const a = req.actor;
@@ -147,26 +147,26 @@ function createApi({ svc, viewers, platform, sync, config, log = console, limits
         return { pull: pulled, queue: drained };
     }));
 
-    router.post('/entities/:ref/summary/revisions', guard('reviews.summary.publish'), B('reviews.summary.publish'), R((req) => svc.writeSummary(req.params.ref, body(req), req.actor), 201));
-    router.post('/entities/:ref/summary/proposals', guard('reviews.summary.propose'), B('reviews.summary.propose'), R((req) => svc.proposeSummary(req.params.ref, body(req), req.actor), 201));
-    router.get('/entities/:ref/summary/revisions/:n', guard('reviews.entity.resolve'), R((req) => ({ revision: svc.summaryRevision(svc.entity(req.params.ref), req.params.n, req.actor) })));
-    router.post('/entities/:ref/summary/revisions/:n/review', guard('reviews.summary.publish'), B('reviews.summary.publish'), R((req) => svc.reviewSummary(req.params.ref, req.params.n, body(req), req.actor)));
-    router.post('/entities/:ref/summary/publish', guard('reviews.summary.publish'), B('reviews.summary.publish'), R((req) => ({ summary: svc.publishSummary(req.params.ref, body(req), req.actor) })));
-    router.post('/entities/:ref/summary/unpublish', guard('reviews.summary.publish'), B('reviews.summary.publish'), R((req) => ({ summary: svc.unpublishSummary(req.params.ref, req.actor) })));
+    router.post('/entities/:ref/summary/revisions', guard('reviews.summary.publish'), B('reviews.summary.publish'), R(async (req) => await svc.writeSummary(req.params.ref, body(req), req.actor), 201));
+    router.post('/entities/:ref/summary/proposals', guard('reviews.summary.propose'), B('reviews.summary.propose'), R(async (req) => await svc.proposeSummary(req.params.ref, body(req), req.actor), 201));
+    router.get('/entities/:ref/summary/revisions/:n', guard('reviews.entity.resolve'), R(async (req) => ({ revision: await svc.summaryRevision(await svc.entity(req.params.ref), req.params.n, req.actor) })));
+    router.post('/entities/:ref/summary/revisions/:n/review', guard('reviews.summary.publish'), B('reviews.summary.publish'), R(async (req) => await svc.reviewSummary(req.params.ref, req.params.n, body(req), req.actor)));
+    router.post('/entities/:ref/summary/publish', guard('reviews.summary.publish'), B('reviews.summary.publish'), R(async (req) => ({ summary: await svc.publishSummary(req.params.ref, body(req), req.actor) })));
+    router.post('/entities/:ref/summary/unpublish', guard('reviews.summary.publish'), B('reviews.summary.publish'), R(async (req) => ({ summary: await svc.unpublishSummary(req.params.ref, req.actor) })));
 
-    router.post('/entities/:ref/corrections', guard('reviews.correction.submit'), B('reviews.correction.submit'), R((req) => ({ correction: svc.submitCorrection(req.params.ref, body(req), req.actor) }), 201));
-    router.get('/corrections', guard('reviews.entity.manage'), R((req) => {
+    router.post('/entities/:ref/corrections', guard('reviews.correction.submit'), B('reviews.correction.submit'), R(async (req) => ({ correction: await svc.submitCorrection(req.params.ref, body(req), req.actor) }), 201));
+    router.get('/corrections', guard('reviews.entity.manage'), R(async (req) => {
         if (!svc.access.isEditor(req.actor)) throw new svc.ReviewsError(403, 'reviews.editor_required', 'Corrections are read by Reviews editors');
-        return { corrections: svc.openCorrections() };
+        return { corrections: await svc.openCorrections() };
     }));
-    router.patch('/corrections/:id', guard('reviews.entity.manage'), B('reviews.correction.resolve'), R((req) => {
+    router.patch('/corrections/:id', guard('reviews.entity.manage'), B('reviews.correction.resolve'), R(async (req) => {
         const b = body(req);
         // Accepting with a correction publishes a summary revision: a service needs that grant too.
         if (req.actor.kind === 'service' && b.status === 'accepted' && (b.correction_note || b.summary)) {
             const c = checkCapability(req.actor.claims, 'reviews.summary.publish');
             if (!c.allowed) throw new svc.ReviewsError(403, c.code, c.reason);
         }
-        return svc.resolveCorrection(req.params.id, b, req.actor);
+        return await svc.resolveCorrection(req.params.id, b, req.actor);
     }));
 
     return router;

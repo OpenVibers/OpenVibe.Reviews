@@ -9,7 +9,7 @@
  */
 const { createClient } = require('openvibe-sdk/core');
 const { createServiceTokenClient } = require('openvibe-sdk/auth');
-const { createEventsClient, createOutbox } = require('openvibe-sdk/events');
+const { createEventsClient, createPgOutbox } = require('openvibe-sdk/events');
 const { createDiscussionClient } = require('openvibe-publishing/discussion');
 
 class IntegrationError extends Error {
@@ -42,11 +42,12 @@ function createPlatform({ config, db, fetchImpl = globalThis.fetch, tokens = nul
         onWarning: (msg) => log.warn(`[Reviews] ${msg}`),
     });
     const events = createEventsClient(sdk, { source: 'reviews' });
-    const outbox = createOutbox(db, {
+    // The PostgreSQL outbox (ADR-035): rows are written in the change's own transaction (enqueue(db, …) joins the
+    // ambient transaction); several processes relay one table safely (leases). The table is in migrations/.
+    const outbox = createPgOutbox(db, {
         events, table: 'review_event_outbox', intervalMs: config.eventsRelayIntervalMs, now,
         onError: (err) => log.warn(`[Reviews] event relay: ${err && err.message}`),
     });
-    outbox.ensureSchema();
 
     async function getJson(url, audience, { headers = {}, timeoutMs = 8000 } = {}) {
         let res;

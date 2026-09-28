@@ -121,12 +121,12 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
     };
 
     /** :slug → an active entity, or the right redirect / 410 / 404. */
-    function locate(req, res, suffix = '') {
+    async function locate(req, res, suffix = '') {
         const slug = req.params.slug;
-        const e = svc.findEntity(slug);
+        const e = await svc.findEntity(slug);
         const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
         if (!e) {
-            const r = svc.resolveRedirect(`/e/${slug}`);
+            const r = await svc.resolveRedirect(`/e/${slug}`);
             if (r && r.status === 301) { res.set('Cache-Control', 'public, max-age=300').redirect(301, r.location + suffix + query); return null; }
             if (r && r.status === 410) { gone(req, res); return null; }
             notFound(req, res);
@@ -134,7 +134,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
         }
         if (e.state === 'deleted') { gone(req, res); return null; }
         if (e.state === 'merged') {
-            const c = svc.entityById(svc.canonicalOf(e.id));
+            const c = await svc.entityById(await svc.canonicalOf(e.id));
             res.set('Cache-Control', 'public, max-age=60').redirect(301, `${svc.entityPath(c)}${suffix}${query}`);
             return null;
         }
@@ -142,9 +142,9 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
     }
 
     // ── Public ───────────────────────────────────────────────
-    router.get('/', (req, res) => {
-        const all = svc.listEntities({ limit: 1 });
-        send(req, res, 200, views.home({ entities: svc.entitiesWithData(60), total: all.total, editor: isEditor(req) }), {
+    router.get('/', async (req, res) => {
+        const all = await svc.listEntities({ limit: 1 });
+        send(req, res, 200, views.home({ entities: await svc.entitiesWithData(60), total: all.total, editor: isEditor(req) }), {
             robots: 'index, follow', cache: 'public', active: 'home', path: '/',
             jsonLd: seo.structuredData.webPage({ url: `${config.baseUrl}/`, name: 'OpenVibe.Reviews', description: 'Review signals from named sources, with provenance and honest aggregates.' }),
         });
@@ -152,22 +152,22 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
     // What shipped on OpenVibe.Reviews: the shared update log every OpenVibe site has.
     router.get('/updates', (req, res) => send(req, res, 200, frame.updatesBody({ service: 'reviews', siteName: 'OpenVibe.Reviews' }) + `<script src="${ovServe.url('shipped.js')}" defer></script>`, { title: 'What shipped on OpenVibe.Reviews', robots: 'index, follow', cache: 'public', path: '/updates' }));
     router.get('/about', (req, res) => send(req, res, 200, views.aboutPage(), { title: 'How it works', robots: 'index, follow', cache: 'public', active: 'about' }));
-    router.get('/search', (req, res) => {
+    router.get('/search', async (req, res) => {
         const query = String(req.query.q || '').slice(0, 200);
-        send(req, res, 200, views.searchPage({ query, results: query ? svc.search(query) : [] }), { title: query ? `Search: ${query}` : 'Search', robots: 'noindex, follow', query });
+        send(req, res, 200, views.searchPage({ query, results: query ? await svc.search(query) : [] }), { title: query ? `Search: ${query}` : 'Search', robots: 'noindex, follow', query });
     });
 
-    router.get('/e/:slug.json', (req, res) => {
-        const e = locate(req, res, '.json');
+    router.get('/e/:slug.json', async (req, res) => {
+        const e = await locate(req, res, '.json');
         if (!e) return;
-        const p = svc.page(e, req.actor);
+        const p = await svc.page(e, req.actor);
         res.status(200).set('Cache-Control', req.actor.kind === 'anonymous' ? 'public, max-age=60' : 'private, no-store').set('Vary', 'Cookie, Authorization').set('X-Robots-Tag', p.decision.robots)
             .json({ ...p, decision: { indexable: p.decision.indexable, robots: p.decision.robots, reasons: p.decision.codes } });
     });
 
     async function discussionFor(e, actor) {
         if (!platform.community.configured) return { state: 'unavailable', reason: 'OpenVibe.Community is not configured on this server' };
-        const threadId = svc.knownThread(e.id);
+        const threadId = await svc.knownThread(e.id);
         if (!threadId) return { state: 'none' };
         try {
             const data = await platform.community.getThread(threadId, { subject: actor.subject });
@@ -178,9 +178,9 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
     }
 
     router.get('/e/:slug', wrap(async (req, res) => {
-        const e = locate(req, res);
+        const e = await locate(req, res);
         if (!e) return;
-        const p = svc.page(e, req.actor);
+        const p = await svc.page(e, req.actor);
         const discussion = await discussionFor(e, req.actor);
         const head = seo.metaTags({
             decision: p.decision, title: `${e.name} · OpenVibe.Reviews`, siteName: 'OpenVibe.Reviews', type: 'website',
@@ -192,41 +192,41 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
         });
     }));
 
-    router.get('/e/:slug/history', (req, res) => {
-        const e = locate(req, res, '/history');
+    router.get('/e/:slug/history', async (req, res) => {
+        const e = await locate(req, res, '/history');
         if (!e) return;
-        send(req, res, 200, views.historyPage(svc.history(e, req.actor)), { title: `History of ${e.name}`, robots: 'noindex, follow', cache: 'public' });
+        send(req, res, 200, views.historyPage(await svc.history(e, req.actor)), { title: `History of ${e.name}`, robots: 'noindex, follow', cache: 'public' });
     });
 
     router.get('/e/:slug/summary/:n', wrap(async (req, res) => {
-        const e = locate(req, res, `/summary/${req.params.n}`);
+        const e = await locate(req, res, `/summary/${req.params.n}`);
         if (!e) return;
-        const r = svc.summaryRevision(e, req.params.n, req.actor);
-        send(req, res, 200, views.summaryRevisionPage(svc.entityView(e), r, { editor: isEditor(req) }), { title: `${e.name}: summary revision ${r.number}`, robots: 'noindex, follow' });
+        const r = await svc.summaryRevision(e, req.params.n, req.actor);
+        send(req, res, 200, views.summaryRevisionPage(await svc.entityView(e), r, { editor: isEditor(req) }), { title: `${e.name}: summary revision ${r.number}`, robots: 'noindex, follow' });
     }));
 
-    router.get('/e/:slug/correct', (req, res) => {
-        const e = locate(req, res, '/correct');
+    router.get('/e/:slug/correct', async (req, res) => {
+        const e = await locate(req, res, '/correct');
         if (!e) return;
         if (!req.actor.subject) return needSignIn(req, res, 'Sign in with your OpenVibe account to send a correction to the editors.');
-        send(req, res, 200, views.correctionPage(svc.entityView(e), { values: { target_type: req.query.target_type, target_id: req.query.target_id } }), { title: `Correction: ${e.name}`, robots: 'noindex, nofollow' });
+        send(req, res, 200, views.correctionPage(await svc.entityView(e), { values: { target_type: req.query.target_type, target_id: req.query.target_id } }), { title: `Correction: ${e.name}`, robots: 'noindex, nofollow' });
     });
     router.post('/e/:slug/correct', F('reviews.correction.submit'), form, wrap(async (req, res) => {
-        const e = locate(req, res, '/correct');
+        const e = await locate(req, res, '/correct');
         if (!e) return;
         if (!req.actor.subject) return needSignIn(req, res, 'Sign in with your OpenVibe account to send a correction to the editors.');
         const b = req.body || {};
         try {
-            svc.submitCorrection(e.id, { target_type: b.target_type, target_id: b.target_id || null, body: b.body, evidence_url: b.evidence_url || null }, req.actor);
-            send(req, res, 201, views.correctionPage(svc.entityView(e), { done: true }), { title: `Correction: ${e.name}`, robots: 'noindex, nofollow' });
+            await svc.submitCorrection(e.id, { target_type: b.target_type, target_id: b.target_id || null, body: b.body, evidence_url: b.evidence_url || null }, req.actor);
+            send(req, res, 201, views.correctionPage(await svc.entityView(e), { done: true }), { title: `Correction: ${e.name}`, robots: 'noindex, nofollow' });
         } catch (err) {
             if (!err.status || err.status >= 500) throw err;
-            send(req, res, err.status, views.correctionPage(svc.entityView(e), { values: b, error: err.message }), { title: `Correction: ${e.name}`, robots: 'noindex, nofollow' });
+            send(req, res, err.status, views.correctionPage(await svc.entityView(e), { values: b, error: err.message }), { title: `Correction: ${e.name}`, robots: 'noindex, nofollow' });
         }
     }));
 
     router.post('/e/:slug/discuss', F('reviews.discussion.comment'), form, wrap(async (req, res) => {
-        const e = locate(req, res, '/discuss');
+        const e = await locate(req, res, '/discuss');
         if (!e) return;
         if (!req.actor.subject) return needSignIn(req, res, 'Sign in with your OpenVibe account to comment.');
         const message = String((req.body || {}).message || '').trim();
@@ -243,11 +243,12 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
     }));
 
     // ── Editors ──────────────────────────────────────────────
-    router.get('/editor', (req, res) => {
+    router.get('/editor', async (req, res) => {
         if (!editorOnly(req, res)) return;
         send(req, res, 200, views.editorHome({
-            queue: svc.resolutionQueue(100), pending: svc.pendingSummaries(), flagged: svc.flaggedSummaries(),
-            corrections: svc.openCorrections(), stats: svc.stats(), itemView: svc.itemView,
+            // Item views are read here (async); the view renders them as they are.
+            queue: await Promise.all((await svc.resolutionQueue(100)).map((row) => svc.itemView(row))), pending: await svc.pendingSummaries(), flagged: await svc.flaggedSummaries(),
+            corrections: await svc.openCorrections(), stats: await svc.stats(), itemView: (it) => it,
         }), { title: 'Editor desk', robots: 'noindex, nofollow' });
     });
 
@@ -268,7 +269,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
         const b = req.body || {};
         const aliases = ['source', 'url', 'gtin', 'sku', 'external'].map((type) => ({ type, value: String(b[`alias_${type}`] || '').trim() })).filter((a) => a.value);
         try {
-            const out = svc.createEntity({ name: b.name, kind: b.kind, description: b.description || null, aliases }, req.actor);
+            const out = await svc.createEntity({ name: b.name, kind: b.kind, description: b.description || null, aliases }, req.actor);
             res.redirect(303, `${svc.entityPath(out.entity)}/edit`);
         } catch (err) {
             if (!err.status || err.status >= 500) throw err;
@@ -277,102 +278,102 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
     }));
 
     /** An open correction request about `e` (the summary form then answers it). */
-    function openCorrectionFor(e, id) {
-        const c = id ? svc.correction(String(id)) : null;
-        return c && c.status === 'open' && svc.canonicalOf(c.entity_id) === e.id ? c : null;
+    async function openCorrectionFor(e, id) {
+        const c = id ? await svc.correction(String(id)) : null;
+        return c && c.status === 'open' && await svc.canonicalOf(c.entity_id) === e.id ? c : null;
     }
 
-    function editPage(req, res, e, { status = 200, error = null, flash = null, correcting = null } = {}) {
-        send(req, res, status, views.editEntityPage({ page: svc.page(e, req.actor), error, flash, correcting, entities: svc.listEntities({ limit: 200 }).entities }), { title: `Edit ${e.name}`, robots: 'noindex, nofollow' });
+    async function editPage(req, res, e, { status = 200, error = null, flash = null, correcting = null } = {}) {
+        send(req, res, status, views.editEntityPage({ page: await svc.page(e, req.actor), error, flash, correcting, entities: (await svc.listEntities({ limit: 200 })).entities }), { title: `Edit ${e.name}`, robots: 'noindex, nofollow' });
     }
 
-    router.get('/e/:slug/edit', (req, res) => {
+    router.get('/e/:slug/edit', async (req, res) => {
         if (!editorOnly(req, res)) return;
-        const e = locate(req, res, '/edit');
+        const e = await locate(req, res, '/edit');
         if (!e) return;
-        editPage(req, res, e, { flash: req.query.saved ? 'Saved.' : null, correcting: openCorrectionFor(e, req.query.correction) });
+        await editPage(req, res, e, { flash: req.query.saved ? 'Saved.' : null, correcting: await openCorrectionFor(e, req.query.correction) });
     });
     router.post('/e/:slug/edit', F('reviews.entity.manage'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
-        let e = locate(req, res, '/edit');
+        let e = await locate(req, res, '/edit');
         if (!e) return;
         const b = req.body || {};
         try {
             switch (b.action) {
-            case 'details': e = svc.updateEntity(e.id, { name: b.name, slug: b.slug, kind: b.kind, description: b.description || null, noindex: b.noindex === '1' }, req.actor); break;
-            case 'add_alias': svc.addAlias(e.id, { type: b.type, value: b.value }, req.actor); break;
-            case 'remove_alias': svc.removeAlias(e.id, b.alias_id, req.actor); break;
-            case 'add_link': svc.addLink(e.id, { type: b.type, to: b.to }, req.actor); break;
-            case 'unpublish_summary': svc.unpublishSummary(e.id, req.actor); break;
+            case 'details': e = await svc.updateEntity(e.id, { name: b.name, slug: b.slug, kind: b.kind, description: b.description || null, noindex: b.noindex === '1' }, req.actor); break;
+            case 'add_alias': await svc.addAlias(e.id, { type: b.type, value: b.value }, req.actor); break;
+            case 'remove_alias': await svc.removeAlias(e.id, b.alias_id, req.actor); break;
+            case 'add_link': await svc.addLink(e.id, { type: b.type, to: b.to }, req.actor); break;
+            case 'unpublish_summary': await svc.unpublishSummary(e.id, req.actor); break;
             case 'trust': {
                 const [scope, ...rest] = String(b.scope_ref || '').split(':');
-                svc.setTrust({ scope, scope_id: rest.join(':'), key: b.key, value: b.value, note: b.note || null }, req.actor);
+                await svc.setTrust({ scope, scope_id: rest.join(':'), key: b.key, value: b.value, note: b.note || null }, req.actor);
                 break;
             }
             default: return errorPage(req, res, 400, 'Unknown action', 'The form sent an action this page does not know.');
             }
-            res.redirect(303, `${svc.entityPath(svc.entityById(e.id))}/edit?saved=1`);
+            res.redirect(303, `${svc.entityPath(await svc.entityById(e.id))}/edit?saved=1`);
         } catch (err) {
             if (!err.status || err.status >= 500) throw err;
-            editPage(req, res, svc.entityById(e.id), { status: err.status, error: err.message });
+            await editPage(req, res, await svc.entityById(e.id), { status: err.status, error: err.message });
         }
     }));
 
     router.post('/e/:slug/summary', F('reviews.summary.publish'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
-        const e = locate(req, res, '/summary');
+        const e = await locate(req, res, '/summary');
         if (!e) return;
         try {
-            svc.writeSummary(e.id, summaryFromForm(req.body || {}), req.actor);
+            await svc.writeSummary(e.id, summaryFromForm(req.body || {}), req.actor);
             res.redirect(303, `${svc.entityPath(e)}/edit?saved=1`);
         } catch (err) {
             if (!err.status || err.status >= 500) throw err;
-            editPage(req, res, e, { status: err.status, error: err.message, correcting: openCorrectionFor(e, (req.body || {}).correction_id) });
+            await editPage(req, res, e, { status: err.status, error: err.message, correcting: await openCorrectionFor(e, (req.body || {}).correction_id) });
         }
     }));
 
     router.post('/e/:slug/summary/:n/review', F('reviews.summary.publish'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
-        const e = locate(req, res, `/summary/${req.params.n}/review`);
+        const e = await locate(req, res, `/summary/${req.params.n}/review`);
         if (!e) return;
         const b = req.body || {};
-        svc.reviewSummary(e.id, req.params.n, { decision: b.decision, note: b.note || null, publish: true }, req.actor);
+        await svc.reviewSummary(e.id, req.params.n, { decision: b.decision, note: b.note || null, publish: true }, req.actor);
         res.redirect(303, `${svc.entityPath(e)}?saved=1`);
     }));
 
     router.post('/e/:slug/merge', F('reviews.entity.merge'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
-        const e = locate(req, res, '/merge');
+        const e = await locate(req, res, '/merge');
         if (!e) return;
         const b = req.body || {};
-        const out = svc.merge(e.id, { into: String(b.into || '').trim(), note: b.note || null }, req.actor);
+        const out = await svc.merge(e.id, { into: String(b.into || '').trim(), note: b.note || null }, req.actor);
         res.redirect(303, `${svc.entityPath(out.into)}/history#merges`);
     }));
 
     router.post('/e/:slug/split', F('reviews.entity.merge'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
-        const e = svc.findEntity(req.params.slug);
+        const e = await svc.findEntity(req.params.slug);
         if (!e) return notFound(req, res);
         const b = req.body || {};
-        const out = svc.split(e.id, { note: b.note || null }, req.actor);
+        const out = await svc.split(e.id, { note: b.note || null }, req.actor);
         res.redirect(303, `${svc.entityPath(out.entity)}/history#merges`);
     }));
 
-    router.get('/editor/items/:id', (req, res) => {
+    router.get('/editor/items/:id', async (req, res) => {
         if (!editorOnly(req, res)) return;
-        const row = svc.item(req.params.id);
+        const row = await svc.item(req.params.id);
         if (!row) return notFound(req, res);
-        const item = svc.itemView(row);
+        const item = await svc.itemView(row);
         const candidates = item.candidates.map((c) => c.entity).filter(Boolean);
         send(req, res, 200, views.itemPage({ item, candidates }), { title: `Item ${item.id}`, robots: 'noindex, nofollow' });
     });
     router.post('/editor/items/:id', F('reviews.item.resolve'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
         const b = req.body || {};
-        if (b.action === 'ignore') svc.ignoreItem(req.params.id, { note: b.note || null }, req.actor);
+        if (b.action === 'ignore') await svc.ignoreItem(req.params.id, { note: b.note || null }, req.actor);
         else {
             const target = String(b.entity_other || '').trim() || String(b.entity || '').trim();
-            svc.confirmResolution(req.params.id, { entity: target, add_alias: b.add_alias || null }, req.actor);
+            await svc.confirmResolution(req.params.id, { entity: target, add_alias: b.add_alias || null }, req.actor);
         }
         res.redirect(303, '/editor#items');
     }));
@@ -380,7 +381,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
     router.post('/editor/corrections/:id', F('reviews.correction.resolve'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
         const b = req.body || {};
-        svc.resolveCorrection(req.params.id, { status: b.status, note: b.note || null, correction_note: b.correction_note || null }, req.actor);
+        await svc.resolveCorrection(req.params.id, { status: b.status, note: b.note || null, correction_note: b.correction_note || null }, req.actor);
         res.redirect(303, '/editor#corrections');
     }));
 

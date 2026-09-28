@@ -59,9 +59,9 @@ t('strong identifiers resolve; names only propose candidates; conflicts wait for
         // Re-attribution withdraws the old signal and creates a new one for the other entity.
         const moved = await req(h, 'POST', `/api/v1/items/${nameOnly.item.id}/resolution`, { token: editorToken(), body: { entity: w.slug } });
         assert.strictEqual(moved.status, 200, moved.text);
-        const sigs = h.db.prepare('SELECT entity_id, status FROM review_signals WHERE source_item_id = ? ORDER BY created_at').all(nameOnly.item.id);
+        const sigs = await h.db.prepare('SELECT entity_id, status FROM review_signals WHERE source_item_id = ? ORDER BY created_at').all(nameOnly.item.id);
         assert.deepStrictEqual(sigs.map((s) => [s.entity_id, s.status]), [[w2.id, 'withdrawn'], [w.id, 'active']]);
-        const log = h.db.prepare("SELECT COUNT(*) AS n FROM review_audit WHERE action = 'item.resolved'").get().n;
+        const log = (await h.db.prepare("SELECT COUNT(*) AS n FROM review_audit WHERE action = 'item.resolved'").get()).n;
         assert.strictEqual(log, 2);
 
         // Strong identifiers are unique across entities.

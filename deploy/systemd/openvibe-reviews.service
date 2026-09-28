@@ -4,7 +4,7 @@ Description=OpenVibe.Reviews — review signals with provenance, entity resoluti
 # keeps retrying the JWKS fetch: public pages work, sign-in and token calls answer 503 meanwhile.
 # Sources, Events and Community are optional: each degrades to an explicit failure state (without
 # Sources there are no signals, so no aggregates — the pages say so).
-After=network.target
+After=network.target postgresql.service pgbouncer.service valkey-server.service
 Wants=openvibe-network.service openvibe-sources.service
 
 [Service]

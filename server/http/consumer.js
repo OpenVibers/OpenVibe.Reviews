@@ -15,32 +15,31 @@
  */
 const express = require('express');
 const { http } = require('openvibe-contracts');
-const { parseDelivery, createInbox } = require('openvibe-sdk/events');
+const { parseDelivery, createPgInbox } = require('openvibe-sdk/events');
 
 const CONSUMER = 'reviews-sources';
 
 function consumerRouter({ db, svc, sync, config, log = console }) {
     const router = express.Router();
-    const inbox = createInbox(db, { table: 'review_event_inbox' });
-    inbox.ensureSchema();
+    const inbox = createPgInbox(db, { table: 'review_event_inbox' });   // the table is in migrations/
     const system = { kind: 'system', service: 'svc:reviews' };
 
-    function apply(event) {
-        return db.transaction(() => {
-            const r = inbox.once(CONSUMER, event.event_id, () => {
+    async function apply(event) {
+        return await db.tx(async () => {
+            const r = await inbox.once(CONSUMER, event.event_id, async () => {
                 if (event.source !== 'sources') return 'ignored:source';
                 const p = event.payload && typeof event.payload === 'object' ? event.payload : {};
                 if (p.category !== 'reviews') return 'ignored:category';
                 if (!/^itm_[0-9A-HJKMNP-TV-Z]{26}$/.test(String(p.item_id || ''))) return 'ignored:no_item';
-                if (event.event_type === 'sources.item.created' || event.event_type === 'sources.item.updated') { sync.enqueue(p.item_id, event.event_type); return 'queued'; }
-                if (event.event_type === 'sources.item.removed') return svc.removeItem(p.item_id, p.reason || 'removed by its source', system).outcome;
+                if (event.event_type === 'sources.item.created' || event.event_type === 'sources.item.updated') { await sync.enqueue(p.item_id, event.event_type); return 'queued'; }
+                if (event.event_type === 'sources.item.removed') return (await svc.removeItem(p.item_id, p.reason || 'removed by its source', system)).outcome;
                 return 'ignored:type';
             });
             return r.duplicate ? { duplicate: true, outcome: null } : { duplicate: false, outcome: r.result };
-        })();
+        });
     }
 
-    router.post('/events', express.raw({ type: () => true, limit: '256kb' }), (req, res) => {
+    router.post('/events', express.raw({ type: () => true, limit: '256kb' }), async (req, res) => {
         const secrets = config.eventsWebhookSecrets;
         if (!secrets.length) return http.sendProblem(res, 503, 'reviews.webhook_disabled', { detail: 'REVIEWS_EVENTS_SECRET is not set', ctx: req.ov });
         const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
@@ -54,7 +53,7 @@ function consumerRouter({ db, svc, sync, config, log = console }) {
         }
         let out;
         try {
-            out = apply(event);
+            out = await apply(event);
         } catch (e) {
             log.error(`[Reviews] event ${event.event_id} (${event.event_type}) failed:`, e.message);
             return http.sendProblem(res, 500, 'reviews.event_failed', { detail: 'processing failed; it will be retried', ctx: req.ov });

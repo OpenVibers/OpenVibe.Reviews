@@ -70,7 +70,7 @@ t('every public page reads without JavaScript; sitemaps, feeds and robots follow
         assert.match(noScripts(home0.text), /Nothing yet\./, 'nothing seeded');
         const e = await createEntity(h, { name: 'Portal 2', kind: 'game', description: 'A puzzle game.', aliases: [{ type: 'source', value: 'steam-reviews-portal-2' }] });
         for (const v of [true, false]) await importItem(h, steamItem({ votedUp: v }));
-        const sig = h.db.prepare('SELECT id, recommended FROM review_signals').all();
+        const sig = await h.db.prepare('SELECT id, recommended FROM review_signals').all();
         let sm = await req(h, 'GET', '/sitemaps/entities-1.xml');
         assert.ok(!sm.text.includes(`/e/${e.slug}`), 'thin: not in the sitemap');
         await req(h, 'POST', `/api/v1/entities/${e.slug}/summary/revisions`, { token: editorToken(), body: {
@@ -112,8 +112,8 @@ t('every public page reads without JavaScript; sitemaps, feeds and robots follow
         const after = await req(h, 'GET', `/e/${e.slug}`, { cookie: cookieFor(readerToken()) });
         assert.match(after.text, /Is the co-op counted here\?/);
         // Referenced, not duplicated: the comment text exists in Community only.
-        for (const { name } of h.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()) {
-            for (const row of h.db.prepare(`SELECT * FROM "${name}"`).all()) assert.ok(!JSON.stringify(row).includes('co-op counted'), `comment text copied into ${name}`);
+        for (const { name } of await h.db.prepare("SELECT table_name AS name FROM information_schema.tables WHERE table_schema = current_schema()").all()) {
+            for (const row of await h.db.prepare(`SELECT * FROM "${name}"`).all()) assert.ok(!JSON.stringify(row).includes('co-op counted'), `comment text copied into ${name}`);
         }
     } finally { await h.stop(); }
 });
@@ -140,9 +140,9 @@ t('editors work with plain forms: create, resolve an ambiguous item, summarise, 
         assert.match(form.text, /<form method="post" action="\/editor\/items\//);
         const res = await req(h, 'POST', `/editor/items/${it.id}`, { cookie: ed, form: { action: 'resolve', entity: 'widget-3000', add_alias: 'url' } });
         assert.strictEqual(res.status, 303);
-        const sig = h.db.prepare("SELECT id FROM review_signals WHERE status = 'active'").get();
+        const sig = await h.db.prepare("SELECT id FROM review_signals WHERE status = 'active'").get();
         assert.ok(sig, 'confirmed → signal');
-        assert.strictEqual(h.db.prepare('SELECT resolution_rule, resolved_by FROM review_source_items WHERE id = ?').get(it.id).resolution_rule, 'editor');
+        assert.strictEqual((await h.db.prepare('SELECT resolution_rule, resolved_by FROM review_source_items WHERE id = ?').get(it.id)).resolution_rule, 'editor');
 
         const edit = await req(h, 'GET', '/e/widget-3000/edit', { cookie: ed });
         assert.match(edit.text, new RegExp(`<option value="${sig.id}"`));
@@ -169,7 +169,7 @@ t('editors work with plain forms: create, resolve an ambiguous item, summarise, 
         assert.strictEqual((await req(h, 'GET', '/e/widget-3000-classic/correct')).status, 401);
         const cor = await req(h, 'POST', '/e/widget-3000-classic/correct', { cookie: cookieFor(readerToken()), form: { target_type: 'signal', target_id: sig.id, body: 'That listing is for the older model.' } });
         assert.strictEqual(cor.status, 201);
-        assert.strictEqual(h.db.prepare("SELECT COUNT(*) AS n FROM review_corrections WHERE status = 'open'").get().n, 1);
+        assert.strictEqual((await h.db.prepare("SELECT COUNT(*) AS n FROM review_corrections WHERE status = 'open'").get()).n, 1);
         // Cross-site posts are refused.
         const xs = await req(h, 'POST', '/e/widget-3000-classic/correct', { cookie: cookieFor(readerToken()), headers: { Origin: 'https://evil.example' }, form: { target_type: 'entity', body: 'cross-site attempt here' } });
         assert.strictEqual(xs.status, 403);

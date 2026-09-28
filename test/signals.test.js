@@ -29,7 +29,7 @@ t('items without an entity wait unmatched; a source binding settles them; every 
             assert.strictEqual(out.item.resolution, 'unmatched');
             assert.strictEqual(out.signal, null);
         }
-        assert.strictEqual(h.db.prepare('SELECT COUNT(*) AS n FROM review_signals').get().n, 0);
+        assert.strictEqual((await h.db.prepare('SELECT COUNT(*) AS n FROM review_signals').get()).n, 0);
 
         const e = await createEntity(h, { name: 'Portal 2', kind: 'game', aliases: [{ type: 'source', value: 'steam-reviews-portal-2' }] });
         const agg = await aggregateOf(h, e.slug);
@@ -48,12 +48,12 @@ t('items without an entity wait unmatched; a source binding settles them; every 
             assert.ok('license_note' in s.provenance);
         }
         // The table itself refuses a signal without provenance.
-        assert.throws(() => h.db.prepare("INSERT INTO review_signals (id, entity_id, source_item_id, source_key, item_revision, type, recommended, observed_at, created_by, created_at) VALUES ('sig_x', ?, 'itm_nope', 'steam-reviews-portal-2', 1, 'recommendation', 1, NULL, 'x', 0)").run(e.id));
+        await assert.rejects(async () => await h.db.prepare("INSERT INTO review_signals (id, entity_id, source_item_id, source_key, item_revision, type, recommended, observed_at, created_by, created_at) VALUES ('sig_x', ?, 'itm_nope', 'steam-reviews-portal-2', 1, 'recommendation', 1, NULL, 'x', 0)").run(e.id));
         // Signal values and provenance are immutable.
-        assert.throws(() => h.db.prepare('UPDATE review_signals SET observed_at = ? WHERE id = ?').run('2020-01-01T00:00:00.000Z', page.json.signals[0].signal_id), /immutable/);
-        assert.throws(() => h.db.prepare('DELETE FROM review_signals WHERE id = ?').run(page.json.signals[0].signal_id), /never deleted/);
+        await assert.rejects(async () => await h.db.prepare('UPDATE review_signals SET observed_at = ? WHERE id = ?').run('2020-01-01T00:00:00.000Z', page.json.signals[0].signal_id), /immutable/);
+        await assert.rejects(async () => await h.db.prepare('DELETE FROM review_signals WHERE id = ?').run(page.json.signals[0].signal_id), /never deleted/);
         // Review text is never kept.
-        for (const row of h.db.prepare('SELECT fields, title FROM review_source_items').all()) {
+        for (const row of await h.db.prepare('SELECT fields, title FROM review_source_items').all()) {
             assert.ok(!/summary|review_text|body/.test(row.fields));
             assert.strictEqual(row.title, null);
         }
@@ -67,7 +67,7 @@ t('an entity without signals has no aggregate (null, not 0) and no aggregate row
         const agg = await aggregateOf(h, e.slug);
         assert.strictEqual(agg.aggregate, null);
         assert.strictEqual(agg.aggregate_revision, null);
-        assert.strictEqual(h.db.prepare('SELECT COUNT(*) AS n FROM review_aggregates').get().n, 0);
+        assert.strictEqual((await h.db.prepare('SELECT COUNT(*) AS n FROM review_aggregates').get()).n, 0);
     } finally { await h.stop(); }
 });
 
@@ -96,10 +96,10 @@ t('source removal (webhook) withdraws the signal and the next aggregate revision
         assert.strictEqual(agg.aggregate.result.components.rating.on_scale.value, 4);
         assert.strictEqual(agg.aggregate.result.components.rating.count, 100);
         assert.ok(!agg.aggregate.result.inputs.some((i) => i.source_item_id === b.id));
-        const sig = h.db.prepare('SELECT * FROM review_signals WHERE source_item_id = ?').get(b.id);
+        const sig = await h.db.prepare('SELECT * FROM review_signals WHERE source_item_id = ?').get(b.id);
         assert.strictEqual(sig.status, 'withdrawn');
         assert.match(sig.status_reason, /licence withdrawn/);
-        const ev = outbox(h).filter((x) => x.event_type === 'reviews.signal.removed');
+        const ev = (await outbox(h)).filter((x) => x.event_type === 'reviews.signal.removed');
         assert.strictEqual(ev.length, 1);
         assert.strictEqual(ev[0].payload.source_item_id, b.id);
 
@@ -111,7 +111,7 @@ t('source removal (webhook) withdraws the signal and the next aggregate revision
         agg = await aggregateOf(h, e.slug);
         assert.strictEqual(agg.aggregate, null, 'no qualifying signal → no aggregate');
         assert.strictEqual(agg.aggregate_revision, rev + 2, 'the disappearance is itself a recorded revision');
-        const rows = h.db.prepare('SELECT revision, result FROM review_aggregates WHERE entity_id = ? ORDER BY revision').all(e.id);
+        const rows = await h.db.prepare('SELECT revision, result FROM review_aggregates WHERE entity_id = ? ORDER BY revision').all(e.id);
         assert.strictEqual(rows[rows.length - 1].result, null);
     } finally { await h.stop(); }
 });
@@ -135,7 +135,7 @@ t('an item update supersedes the signal; the pull path follows Sources in change
         assert.strictEqual(again.json.pull.applied, 1);
         agg = await aggregateOf(h, e.slug);
         assert.strictEqual(agg.aggregate.result.components.recommendation.percent, 50);
-        const sigs = h.db.prepare('SELECT * FROM review_signals WHERE source_item_id = ? ORDER BY created_at').all(a.id);
+        const sigs = await h.db.prepare('SELECT * FROM review_signals WHERE source_item_id = ? ORDER BY created_at').all(a.id);
         assert.deepStrictEqual(sigs.map((s) => s.status), ['superseded', 'active']);
         assert.strictEqual(sigs[0].superseded_by, sigs[1].id);
         assert.strictEqual(sigs[1].item_revision, 2);
@@ -166,7 +166,7 @@ t('a Sources outage changes nothing and invents nothing', async () => {
         // An event for an item Sources cannot serve right now is queued and retried, not faked.
         const ev = await deliver(h, sourcesEvent('sources.item.created', steamItem()));
         assert.strictEqual(ev.json.outcome, 'queued');
-        assert.strictEqual(h.sync.pending(), 1);
+        assert.strictEqual(await h.sync.pending(), 1);
     } finally { await h.stop(); }
 });
 
@@ -177,7 +177,7 @@ t('every produced event is a valid events.event-envelope@1', async () => {
         const it = steamItem({ votedUp: true });
         await importItem(h, it);
         await deliver(h, sourcesEvent('sources.item.removed', h.sources.remove(it.id), { reason: 'takedown' }));
-        const events = outbox(h);
+        const events = await outbox(h);
         assert.ok(events.some((x) => x.event_type === 'reviews.signal.added'));
         assert.ok(events.some((x) => x.event_type === 'reviews.signal.removed'));
         assert.ok(events.some((x) => x.event_type === 'reviews.index_document.upserted'));

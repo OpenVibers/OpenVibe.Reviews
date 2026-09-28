@@ -14,7 +14,7 @@ const {
 
 const t = suite('threat');
 const ORIGIN = 'http://reviews.test';
-const count = (h, name) => h.db.prepare('SELECT COUNT(*) AS n FROM review_entities WHERE name = ?').get(name).n;
+const count = async (h, name) => (await h.db.prepare('SELECT COUNT(*) AS n FROM review_entities WHERE name = ?').get(name)).n;
 
 t('cross-site writes are refused on pages and on the cookie-authenticated API; same-origin and Bearer writes are not', async () => {
     const h = await boot();
@@ -26,7 +26,7 @@ t('cross-site writes are refused on pages and on the cookie-authenticated API; s
         assert.strictEqual((await post({ Origin: 'null', 'Sec-Fetch-Site': 'cross-site' }, 'null origin from another site')).status, 403);
         assert.strictEqual((await post({ 'Sec-Fetch-Site': 'same-site' }, 'a sibling subdomain posting')).status, 403);
         assert.strictEqual((await post({ Origin: 'https://evil.example', 'Sec-Fetch-Site': 'same-origin' }, 'a foreign origin whatever else')).status, 403);
-        assert.strictEqual(h.db.prepare('SELECT COUNT(*) AS n FROM review_corrections').get().n, 0);
+        assert.strictEqual((await h.db.prepare('SELECT COUNT(*) AS n FROM review_corrections').get()).n, 0);
         assert.strictEqual((await post({ Origin: ORIGIN, 'Sec-Fetch-Site': 'same-origin' }, 'a same-origin form post')).status, 201);
         assert.strictEqual((await post({ Origin: 'null' }, 'privacy settings, no fetch metadata')).status, 201);
 
@@ -37,7 +37,7 @@ t('cross-site writes are refused on pages and on the cookie-authenticated API; s
         assert.strictEqual(r.json.code, 'request.cross_site');
         r = await api('Via cookie, cross-site fetch', { 'Sec-Fetch-Site': 'cross-site' }, { cookie: ed });
         assert.strictEqual(r.status, 403, r.text);
-        assert.strictEqual(count(h, 'Via cookie from evil') + count(h, 'Via cookie, cross-site fetch'), 0);
+        assert.strictEqual(await count(h, 'Via cookie from evil') + await count(h, 'Via cookie, cross-site fetch'), 0);
         assert.strictEqual((await req(h, 'POST', `/api/v1/entities/${e.slug}/summary/unpublish`, { cookie: ed, headers: { 'Sec-Fetch-Site': 'cross-site' } })).status, 403, 'an empty-body write too');
         assert.strictEqual((await api('Via cookie, same origin', { Origin: ORIGIN, 'Sec-Fetch-Site': 'same-origin' }, { cookie: ed })).status, 201);
         assert.strictEqual((await api('Via Bearer', { Origin: 'https://tool.example' }, { token: editorToken() })).status, 201, 'a Bearer token is never ambient');
@@ -59,7 +59,7 @@ t('the correction queue: one open copy of a request, a daily allowance per perso
         const huge = await send('A very long target id follows.', { target_id: 'x'.repeat(100000) });
         assert.strictEqual(huge.status, 201);
         assert.strictEqual(huge.json.correction.target_id.length, 100);
-        const logged = h.db.prepare("SELECT detail FROM review_audit WHERE action = 'correction.submitted' ORDER BY id DESC").get();
+        const logged = await h.db.prepare("SELECT detail FROM review_audit WHERE action = 'correction.submitted' ORDER BY id DESC").get();
         assert.ok(logged.detail.length < 300, 'the audit row holds the capped id, not the request');
         for (let i = 3; i <= 20; i++) assert.strictEqual((await send(`Correction number ${i} about this entity.`)).status, 201, `#${i}`);
         const over = await send('One more than the daily allowance.');
@@ -81,12 +81,12 @@ t('audit text is bounded; readers see "an editor", never an editor\'s id; the en
         const b = await createEntity(h, { name: 'Widget (old listing)', kind: 'product' });
         const m = await req(h, 'POST', `/api/v1/entities/${b.slug}/merge`, { token: editorToken(), body: { into: a.slug, note: 'n'.repeat(50000) } });
         assert.strictEqual(m.status, 200, m.text);
-        const row = h.db.prepare("SELECT detail FROM review_audit WHERE action = 'entity.merged'").get();
+        const row = await h.db.prepare("SELECT detail FROM review_audit WHERE action = 'entity.merged'").get();
         assert.ok(row.detail.length < 3000, `audit detail is ${row.detail.length} characters`);
 
         const e = await createEntity(h, { name: 'Portal 2', kind: 'game', aliases: [{ type: 'source', value: 'steam-reviews-portal-2' }] });
         for (const v of [true, false]) await importItem(h, steamItem({ votedUp: v }));
-        const sigs = h.db.prepare("SELECT id FROM review_signals WHERE status = 'active'").all().map((s) => s.id);
+        const sigs = (await h.db.prepare("SELECT id FROM review_signals WHERE status = 'active'").all()).map((s) => s.id);
         assert.strictEqual((await req(h, 'POST', `/api/v1/entities/${e.slug}/summary/revisions`, { token: editorToken(), body: { overview: 'Opinion in the sample is split.', overview_signals: sigs, publish: true } })).status, 201);
         for (const path of [`/e/${e.slug}.json`, `/api/v1/entities/${e.slug}`, `/api/v1/entities/${e.slug}/history`, `/api/v1/entities/${e.slug}/summary/revisions/1`, `/e/${e.slug}`, `/e/${e.slug}/history`]) {
             const r = await req(h, 'GET', path);
@@ -110,7 +110,7 @@ t('AI text cannot spell a rating out in words; out-of-scale source ratings are n
     try {
         const e = await createEntity(h, { name: 'Portal 2', kind: 'game', aliases: [{ type: 'source', value: 'steam-reviews-portal-2' }] });
         for (const v of [true, true]) await importItem(h, steamItem({ votedUp: v }));
-        const sigs = h.db.prepare("SELECT id FROM review_signals WHERE status = 'active'").all().map((s) => s.id);
+        const sigs = (await h.db.prepare("SELECT id FROM review_signals WHERE status = 'active'").all()).map((s) => s.id);
         const AI = serviceToken({ client: 'ai', cap: ['reviews.summary.propose'] });
         const wf = { id: 'reviews.summarize_entity', run_id: 'run_01J9ZZZZZZZZZZZZZZZZZZZZZZ' };
         for (const text of ['Easily four and a half stars.', 'A nine out of ten experience.', 'A five-star puzzle game.']) {

@@ -14,7 +14,7 @@ const MOD = 'mod:mod_01J8ZQ4Y7N3M2K1H0G9F8E7D6C';
 const CAPS = ['reviews.entity.manage'];
 const token = (sub, actorType, extra) => serviceToken({ sub, actorType, cap: CAPS, extra });
 const entity = (name) => ({ name, kind: 'product' });
-const count = (h, name) => h.db.prepare('SELECT COUNT(*) AS n FROM review_entities WHERE name = ?').get(name).n;
+const count = async (h, name) => (await h.db.prepare('SELECT COUNT(*) AS n FROM review_entities WHERE name = ?').get(name)).n;
 
 t('an app or module cannot act as an editor by naming them in X-OV-Subject', async () => {
     const h = await boot();
@@ -24,7 +24,7 @@ t('an app or module cannot act as an editor by naming them in X-OV-Subject', asy
                 const r = await req(h, 'POST', '/api/v1/entities', { token: token(sub, type, extra), headers: { 'X-OV-Subject': EDITOR }, body: entity(`Planted by ${type}`) });
                 assert.strictEqual(r.status, 403, `${type} ${JSON.stringify(extra)}: ${r.text}`);
                 assert.strictEqual(r.json.code, 'subject.not_delegated');
-                assert.strictEqual(count(h, `Planted by ${type}`), 0);
+                assert.strictEqual(await count(h, `Planted by ${type}`), 0);
             }
         }
     } finally { await h.stop(); }

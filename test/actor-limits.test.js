@@ -53,15 +53,15 @@ const H = require('./helpers');
 
         // entity edits: 30 a minute per editor, shared by the API and the form; nothing is stored past it
         clock = Date.UTC(2026, 8, 27, 12, 5, 0);
-        const count = () => h.db.prepare('SELECT COUNT(*) AS n FROM review_entities').get().n;
+        const count = async () => (await h.db.prepare('SELECT COUNT(*) AS n FROM review_entities').get()).n;
         for (let i = 0; i < 30; i++) {
             r = await H.req(h, 'POST', '/api/v1/entities', { token: H.editorToken(), body: { name: `Limits entity ${i}`, kind: 'product' } });
             assert.strictEqual(r.status, 201, `entity ${i + 1}: ${r.text}`);
         }
-        const before = count();
+        const before = await count();
         r = await H.req(h, 'POST', '/editor/entities/new', { cookie: H.cookieFor(H.editorToken()), form: { name: 'One too many', kind: 'product' } });
         assert.deepStrictEqual([r.status, r.json && r.json.code, r.headers.get('retry-after')], [429, 'rate_limited', '60']);
-        assert.strictEqual(count(), before, 'nothing stored');
+        assert.strictEqual(await count(), before, 'nothing stored');
         r = await H.req(h, 'POST', '/api/v1/entities', { token: chief, body: { name: 'Another editor', kind: 'product' } });
         assert.strictEqual(r.status, 201, `another editor still writes: ${r.text}`);
 

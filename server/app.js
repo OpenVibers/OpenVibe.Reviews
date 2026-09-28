@@ -25,6 +25,22 @@ const { createActorLimits } = require('./http/actor-limits');
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const VERSION = require('../package.json').version;
 
+/**
+ * A gauge's collect() is synchronous and the database is not (ADR-035): each scrape returns what the previous scrape
+ * read (one interval behind) and starts the next read. It never throws.
+ */
+function lagged(read, initial) {
+    let last = initial;
+    let busy = false;
+    return () => {
+        if (!busy) {
+            busy = true;
+            Promise.resolve().then(read).then((v) => { last = v; }, () => {}).finally(() => { busy = false; });
+        }
+        return last;
+    };
+}
+
 function createApp({ config, svc, viewers, platform, sync, keys, db, log = console, rateLimits = true, fetchImpl = globalThis.fetch, limitsNow = null }) {
     const app = express();
     app.disable('x-powered-by');
@@ -33,22 +49,24 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
     require('openvibe-shared/trace').install(app);
 
     const release = require('openvibe-shared/release').createRelease({ service: 'reviews', root: path.join(__dirname, '..') });
+    // Valkey (ADR-035): shared, never-authoritative state (per-actor limit counters). Optional.
+    const valkey = config.valkey.url ? require('openvibe-sdk/valkey').createValkey({ url: config.valkey.url, prefix: config.valkey.prefix, log }) : null;
     const metrics = require('openvibe-shared/metrics').instrument(app, { service: 'reviews', release: release.release });
     metrics.registry.gauge({
         name: 'reviews_event_outbox', help: 'Events in the outbox by state', labelNames: ['state'],
-        collect: () => [{ labels: { state: 'pending' }, value: platform.outbox.pending() }, { labels: { state: 'rejected' }, value: platform.outbox.rejected() }],
+        collect: lagged(async () => [{ labels: { state: 'pending' }, value: await platform.outbox.pending() }, { labels: { state: 'rejected' }, value: await platform.outbox.rejected() }], []),
     });
     metrics.registry.gauge({
         name: 'reviews_work', help: 'Editorial and import backlog', labelNames: ['kind'],
-        collect: () => {
-            const s = svc.stats();
+        collect: lagged(async () => {
+            const s = await svc.stats();
             return [
                 { labels: { kind: 'items_unresolved' }, value: s.items_unresolved },
                 { labels: { kind: 'corrections_open' }, value: s.corrections_open },
                 { labels: { kind: 'summaries_flagged' }, value: s.summaries_flagged },
-                { labels: { kind: 'import_queue' }, value: sync.pending() },
+                { labels: { kind: 'import_queue' }, value: await sync.pending() },
             ];
-        },
+        }, []),
     });
 
     app.use((req, res, next) => {
@@ -87,7 +105,17 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
     const ready = createReadiness({
         service: 'reviews', release: release.release,
         checks: [
-            { name: 'db', required: true, check: () => db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name IN ('review_entities','review_signals','review_summary_revisions')").get().n === 3 || 'review tables missing' },
+            {
+                name: 'db', required: true,
+                // A real round trip that names the store (postgresql / pglite), and the authority tables present.
+                check: async () => {
+                    const r = await db.ready();
+                    if (!r.ok) return r.error;
+                    const n = await db.prepare("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = current_schema() AND table_name IN ('review_entities','review_signals','review_summary_revisions')").pluck().get();
+                    return n === 3 ? { ok: true, detail: r.detail } : 'schema missing (migrations did not run)';
+                },
+            },
+            { name: 'valkey', required: false, check: async () => (valkey ? valkey.ready() : { skipped: 'VALKEY_URL not set: per-actor limits count in this process only' }) },
             { name: 'network_jwks', required: false, check: () => { if (keys.loaded()) return true; keys.ensure().catch(() => {}); return 'Network signing key not loaded yet: sign-in and token calls answer 503'; } },
             { name: 'sources', required: false, check: () => platform.sources.configured || 'not configured: no review items are read, so no signals and no aggregates exist' },
             { name: 'events_relay', required: false, check: () => (platform.eventsConfigured ? true : 'EVENTS_URL or the service principal is not configured: events wait in the outbox') },
@@ -95,10 +123,10 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
             { name: 'community', required: false, check: () => platform.community.configured || 'not configured: discussions show as unavailable' },
             { name: 'editors', required: false, check: () => (svc.access.editorCount() ? true : 'REVIEWS_EDITORS is empty: only Network staff can edit') },
         ],
-        details: () => ({
-            outbox: { pending: platform.outbox.pending(), rejected: platform.outbox.rejected() },
-            sources: { cursor: sync.cursor(), import_queue: sync.pending(), last_pull_ok_at: sync.state('sources.last_pull_ok_at'), last_pull_error: sync.state('sources.last_pull_error') },
-            backlog: svc.stats(),
+        details: async () => ({
+            outbox: { pending: await platform.outbox.pending(), rejected: await platform.outbox.rejected() },
+            sources: { cursor: await sync.cursor(), import_queue: await sync.pending(), last_pull_ok_at: await sync.state('sources.last_pull_ok_at'), last_pull_error: await sync.state('sources.last_pull_error') },
+            backlog: await svc.stats(),
         }),
     });
     app.get('/api/ready', ready.handler);
@@ -107,7 +135,7 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
     app.use('/api/v1/entities/:ref/corrections', limiter(60 * 60000, 20));
     // Per-actor limits (http/actor-limits.js) on /api/v1 and the forms, counted once each router resolved
     // req.actor; the per-address limits here stay. limitsNow: the limiter's clock (tests).
-    const limits = createActorLimits({ config, now: limitsNow || (() => Date.now()), registry: metrics.registry, log, enabled: rateLimits });
+    const limits = createActorLimits({ config, now: limitsNow || (() => Date.now()), registry: metrics.registry, log, enabled: rateLimits, valkey });
     app.use('/api/v1', createApi({ svc, viewers, platform, sync, config, log, limits }));
     app.use('/api', (req, res) => http.sendProblem(res, 404, 'route.not_found', { detail: 'Not found' }));
 

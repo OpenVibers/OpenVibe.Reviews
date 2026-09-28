@@ -52,19 +52,21 @@ t('the service manifest proposal is a valid registry.service-manifest@1 and list
 });
 
 t('the nine authority tables exist; a fresh database holds no content', async () => {
-    const db = openDb(':memory:');
+    const fresh = await require('./db').testDb();
+    const db = fresh.db;
     createStores(db);
-    const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name));
+    const tables = new Set((await db.prepare("SELECT table_name AS name FROM information_schema.tables WHERE table_schema = current_schema()").all()).map((r) => r.name));
     assert.strictEqual(AUTHORITY_TABLES.length, 9);
     for (const name of AUTHORITY_TABLES) assert.ok(tables.has(name), name);
     for (const name of [...tables].filter((n) => n.startsWith('review_'))) {
-        assert.strictEqual(db.prepare(`SELECT COUNT(*) AS n FROM "${name}"`).get().n, 0, `${name} is empty`);
+        assert.strictEqual((await db.prepare(`SELECT COUNT(*) AS n FROM "${name}"`).get()).n, 0, `${name} is empty`);
     }
+    await fresh.close();
     // Booting the service seeds nothing either.
     const h = await boot();
     try {
         for (const name of ['review_entities', 'review_signals', 'review_summaries', 'review_aggregates', 'review_sources', 'review_source_items']) {
-            assert.strictEqual(h.db.prepare(`SELECT COUNT(*) AS n FROM "${name}"`).get().n, 0, name);
+            assert.strictEqual((await h.db.prepare(`SELECT COUNT(*) AS n FROM "${name}"`).get()).n, 0, name);
         }
     } finally { await h.stop(); }
     assert.ok(!fs.existsSync(path.join(__dirname, '..', 'seeds')), 'no seed directory');

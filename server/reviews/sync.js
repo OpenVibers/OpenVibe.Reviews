@@ -27,8 +27,8 @@ function createSourcesSync({ db, svc, platform, config, now = () => Date.now(), 
         pending: db.prepare('SELECT COUNT(*) AS n FROM review_import_queue'),
     };
     const system = { kind: 'system', service: 'svc:reviews' };
-    const state = (name) => { const r = q.get.get(name); return r ? r.value : null; };
-    const setState = (name, value) => q.put.run(name, value == null ? null : String(value), now());
+    const state = async (name) => { const r = await q.get.get(name); return r ? r.value : null; };
+    const setState = async (name, value) => await q.put.run(name, value == null ? null : String(value), now());
 
     let pulling = null;
     let draining = null;
@@ -36,7 +36,7 @@ function createSourcesSync({ db, svc, platform, config, now = () => Date.now(), 
     async function pullOnce({ maxPages = 25 } = {}) {
         if (!platform.sources.configured) return { ok: false, reason: 'OpenVibe.Sources is not configured' };
         const counts = { pages: 0, applied: 0, unchanged: 0, skipped: 0 };
-        let after = Number(state(CURSOR) || 0);
+        let after = Number(await state(CURSOR) || 0);
         const known = new Set();
         const infos = new Map();
         try {
@@ -46,27 +46,27 @@ function createSourcesSync({ db, svc, platform, config, now = () => Date.now(), 
                 for (const key of new Set(body.items.map((i) => i.source_key))) {
                     if (known.has(key)) continue;
                     known.add(key);
-                    if (db.prepare('SELECT 1 FROM review_sources WHERE key = ?').get(key)) continue;
+                    if (await db.prepare('SELECT 1 FROM review_sources WHERE key = ?').get(key)) continue;
                     try { const full = await platform.sources.getSource(key); if (full) infos.set(key, full); } catch { /* notes still come with the item */ }
                 }
-                svc.batch(() => {
+                await svc.batch(async () => {
                     for (const item of body.items) {
                         const info = { ...(infos.get(item.source_key) || {}), ...((body.sources && body.sources[item.source_key]) || {}) };
                         try {
-                            const out = svc.applyItem(item, { sourceInfo: info, actor: system });
+                            const out = await svc.applyItem(item, { sourceInfo: info, actor: system });
                             if (out.outcome === 'unchanged') counts.unchanged++; else counts.applied++;
                         } catch (err) {
                             if (err && err.status && err.status < 500) { counts.skipped++; log.warn(`[Reviews] item ${item && item.id} skipped: ${err.message}`); } else throw err;
                         }
                     }
                 });
-                if (Number.isInteger(body.next_after) && body.next_after >= after) { after = body.next_after; setState(CURSOR, after); }
+                if (Number.isInteger(body.next_after) && body.next_after >= after) { after = body.next_after; await setState(CURSOR, after); }
                 if (!body.more) break;
             }
-            setState('sources.last_pull_ok_at', new Date(now()).toISOString());
+            await setState('sources.last_pull_ok_at', new Date(now()).toISOString());
             return { ok: true, after, ...counts };
         } catch (err) {
-            setState('sources.last_pull_error', `${new Date(now()).toISOString()} ${String(err && err.message).slice(0, 300)}`);
+            await setState('sources.last_pull_error', `${new Date(now()).toISOString()} ${String(err && err.message).slice(0, 300)}`);
             return { ok: false, reason: err && err.message, after, ...counts };
         }
     }
@@ -75,15 +75,15 @@ function createSourcesSync({ db, svc, platform, config, now = () => Date.now(), 
         if (!platform.sources.configured) return { ok: false, reason: 'OpenVibe.Sources is not configured', done: 0 };
         let done = 0;
         let failed = 0;
-        for (const row of q.due.all(now(), limit)) {
+        for (const row of await q.due.all(now(), limit)) {
             try {
                 await svc.importItem(row.item_id, platform.sources, system);
-                q.done.run(row.item_id);
+                await q.done.run(row.item_id);
                 done++;
             } catch (err) {
                 // A 404/422 is final (the item is gone or unusable); anything else is retried.
-                if (err && (err.status === 404 || err.status === 422)) { q.done.run(row.item_id); log.warn(`[Reviews] queued item ${row.item_id} dropped: ${err.message}`); continue; }
-                q.failed.run(now() + BACKOFF_MS[Math.min(row.attempts, BACKOFF_MS.length - 1)], String(err && err.message).slice(0, 500), row.item_id);
+                if (err && (err.status === 404 || err.status === 422)) { await q.done.run(row.item_id); log.warn(`[Reviews] queued item ${row.item_id} dropped: ${err.message}`); continue; }
+                await q.failed.run(now() + BACKOFF_MS[Math.min(row.attempts, BACKOFF_MS.length - 1)], String(err && err.message).slice(0, 500), row.item_id);
                 failed++;
             }
         }
@@ -91,9 +91,9 @@ function createSourcesSync({ db, svc, platform, config, now = () => Date.now(), 
     }
 
     return {
-        enqueue(itemId, reason) { q.enqueue.run(String(itemId), String(reason || 'event').slice(0, 60), now()); },
-        pending: () => q.pending.get().n,
-        cursor: () => Number(state(CURSOR) || 0),
+        async enqueue(itemId, reason) { await q.enqueue.run(String(itemId), String(reason || 'event').slice(0, 60), now()); },
+        pending: async () => (await q.pending.get()).n,
+        cursor: async () => Number(await state(CURSOR) || 0),
         state,
         pull(opts) { if (!pulling) pulling = pullOnce(opts).finally(() => { pulling = null; }); return pulling; },
         drain(opts) { if (!draining) draining = drainQueue(opts).finally(() => { draining = null; }); return draining; },

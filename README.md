@@ -18,7 +18,7 @@ it rests on, and nothing a summary says can become a number.
 
 ## Owns
 
-The nine authority tables of §15.13, in Reviews' own SQLite database:
+The nine authority tables of §15.13, in Reviews' own PostgreSQL database (`ov_reviews` on the host's data role, ADR-035; schema in [migrations/](migrations/)):
 
 | Table | What it holds |
 |---|---|
@@ -26,7 +26,7 @@ The nine authority tables of §15.13, in Reviews' own SQLite database:
 | `review_entity_aliases` | names, URLs, GTIN/SKU/MPN, source bindings and external ids used for resolution (strong identifiers are unique) |
 | `review_sources` | the OpenVibe.Sources sources Reviews has seen: name, homepage, licence and terms notes, health |
 | `review_source_items` | Sources items Reviews read — signal fields only, **never review text** — with provenance and how each was resolved |
-| `review_signals` | typed observations (`recommendation`, `recommendation_tally`, `rating`, `rating_aggregate`) from one item revision, with provenance; values immutable (SQLite triggers), status `active`/`superseded`/`withdrawn` |
+| `review_signals` | typed observations (`recommendation`, `recommendation_tally`, `rating`, `rating_aggregate`) from one item revision, with provenance; values immutable (database triggers), status `active`/`superseded`/`withdrawn` |
 | `review_summaries` | one editorial summary per entity, its publication state and review flag |
 | `review_summary_revisions` | immutable summary revisions (openvibe-publishing/revisions) with authorship |
 | `review_trust_metadata` | editor trust decisions per source / signal / entity (exclude from the aggregate with a visible reason, limitation and verification notes), history kept |
@@ -225,7 +225,8 @@ by editors; signals arrive only from Sources.
 - OpenVibe.Community — discussion threads (`community.comment.write`)
 - OpenVibe.AI — optional, proposes summaries through `reviews.summary.propose`
 - OpenVibe.Search — consumes the index events
-- packages: openvibe-publishing v0.4.0, openvibe-contracts v0.49.0, openvibe-shared v1.25.0, openvibe-sdk v0.12.0
+- PostgreSQL 18 and Valkey 9 (OpenVibe.Host `roles/data/`, ADR-035): every read and write is async through `openvibe-sdk/db`; Valkey holds the per-actor limit counters (optional)
+- packages: openvibe-publishing v1.0.0, openvibe-contracts v0.76.0, openvibe-shared v1.25.0, openvibe-sdk v0.20.0
 
 ## Capabilities
 
@@ -285,13 +286,16 @@ references and the gaps that remain: [docs/threat-review.md](docs/threat-review.
 
 Production deploys with `sudo ovhost deploy reviews` on the host (strategy `git-checkout`: fetch,
 fast-forward `/opt/openvibe.reviews`, install on a lockfile change, restart, wait for `/api/ready`).
-The unit is `openvibe-reviews.service` on `127.0.0.1:4830`, the env file `/etc/openvibe/reviews.env`. The store is
+The unit is `openvibe-reviews.service` on `127.0.0.1:4830`, the env file `/etc/openvibe/reviews.env`. The database is
+`ov_reviews` on the host's data role (`sudo /opt/openvibe.host/roles/data/add-service.sh reviews` writes its settings); the
+release migrates it at boot. The one-time move from SQLite is `scripts/migrate-to-postgres.js` (openvibe-sdk
+`runSqliteMigration`, with a `--pglite` rehearsal mode), run while the service is stopped; the old
+`/var/lib/openvibe-reviews/reviews.db` stays read-only for 7 days as the rollback. The store is
 `/var/lib/openvibe-reviews/reviews.db`; the nginx reference is
 [deploy/nginx/openvibe.reviews.conf](deploy/nginx/openvibe.reviews.conf) (the domain still serves the
 OpenVibe.Sites placeholder).
 Rollback: ovhost puts the previous sha back by itself when `/api/ready` does not answer 2xx after the
-restart; afterwards `sudo ovhost rollback reviews --to <sha>`. Nothing blocks a rollback: the schema
-code only adds tables and columns.
+restart; afterwards `sudo ovhost rollback reviews --to <sha>`. Migrations only add tables and columns.
 
 ## Launch rule
 

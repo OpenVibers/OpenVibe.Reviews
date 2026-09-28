@@ -15,7 +15,7 @@ const {
 const t = suite('corrections');
 const noScripts = (html) => html.replace(/<script[\s\S]*?<\/script>/g, '');
 const jsonLd = (html) => [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => JSON.parse(m[1]));
-const revCount = (h, summaryId) => h.db.prepare('SELECT COUNT(*) AS n FROM review_summary_revisions WHERE entity_id = ?').get(summaryId).n;
+const revCount = async (h, summaryId) => (await h.db.prepare('SELECT COUNT(*) AS n FROM review_summary_revisions WHERE entity_id = ?').get(summaryId)).n;
 
 const OLD = 'Every sampled Steam reviewer recommends it without reservation.';
 const NEW = 'Three of the four sampled Steam reviewers recommend it; one does not.';
@@ -26,7 +26,7 @@ const INTERNAL = 'internal: checked the signal table, reader is right';
 async function setup(h) {
     const e = await createEntity(h, { name: 'Portal 2', kind: 'game', aliases: [{ type: 'source', value: 'steam-reviews-portal-2' }] });
     for (const v of [true, true, true, false]) await importItem(h, steamItem({ votedUp: v }));
-    const sigs = h.db.prepare("SELECT id, recommended FROM review_signals WHERE entity_id = ? AND status = 'active' ORDER BY id").all(e.id);
+    const sigs = await h.db.prepare("SELECT id, recommended FROM review_signals WHERE entity_id = ? AND status = 'active' ORDER BY id").all(e.id);
     const pos = sigs.filter((s) => s.recommended === 1).map((s) => s.id);
     const neg = sigs.filter((s) => s.recommended === 0).map((s) => s.id);
     const w = await req(h, 'POST', `/api/v1/entities/${e.slug}/summary/revisions`, { token: editorToken(), body: {
@@ -40,7 +40,7 @@ async function setup(h) {
 async function submit(h, e, body = REQUEST) {
     const r = await req(h, 'POST', `/e/${e.slug}/correct`, { cookie: cookieFor(readerToken()), form: { target_type: 'summary', body, evidence_url: 'https://store.steampowered.com/app/620/' } });
     assert.strictEqual(r.status, 201, r.text.slice(0, 300));
-    return h.db.prepare('SELECT * FROM review_corrections WHERE body = ?').get(body);
+    return await h.db.prepare('SELECT * FROM review_corrections WHERE body = ?').get(body);
 }
 
 t('accepting a correction publishes a new revision with its note; the page shows it and the history without JavaScript', async () => {
@@ -66,8 +66,8 @@ t('accepting a correction publishes a new revision with its note; the page shows
         const bare = await patch(editorToken(), { status: 'accepted' });
         assert.strictEqual(bare.status, 422);
         assert.strictEqual(bare.json.code, 'correction.note_required');
-        assert.strictEqual(revCount(h, summaryId), 1);
-        assert.strictEqual(h.db.prepare('SELECT status FROM review_corrections WHERE id = ?').get(c.id).status, 'open');
+        assert.strictEqual(await revCount(h, summaryId), 1);
+        assert.strictEqual((await h.db.prepare('SELECT status FROM review_corrections WHERE id = ?').get(c.id)).status, 'open');
 
         const ok = await patch(editorToken(), {
             status: 'accepted', note: INTERNAL, correction_note: NOTE,
@@ -82,10 +82,10 @@ t('accepting a correction publishes a new revision with its note; the page shows
         assert.strictEqual(ok.json.revision.author, EDITOR, 'who: the editor who corrected it');
 
         // Immutable revisions: the old text is still revision 1; the correction is revision 2.
-        const rows = h.db.prepare('SELECT number, content, meta, author FROM review_summary_revisions WHERE entity_id = ? ORDER BY number').all(summaryId);
+        const rows = await h.db.prepare('SELECT number, content, meta, author FROM review_summary_revisions WHERE entity_id = ? ORDER BY number').all(summaryId);
         assert.deepStrictEqual(rows.map((r) => [r.number, r.content]), [[1, OLD], [2, NEW]]);
-        assert.strictEqual(JSON.parse(rows[1].meta).correction.note, NOTE);
-        assert.throws(() => h.db.prepare('UPDATE review_summary_revisions SET content = ? WHERE entity_id = ? AND number = 2').run('rewritten', summaryId));
+        assert.strictEqual((typeof rows[1].meta === 'string' ? JSON.parse(rows[1].meta) : rows[1].meta).correction.note, NOTE);
+        await assert.rejects(async () => await h.db.prepare('UPDATE review_summary_revisions SET content = ? WHERE entity_id = ? AND number = 2').run('rewritten', summaryId));
 
         // The public page, without JavaScript: the corrected text, the note, and the history.
         const page = await req(h, 'GET', `/e/${e.slug}`);
@@ -112,7 +112,7 @@ t('accepting a correction publishes a new revision with its note; the page shows
         assert.ok(review.dateModified, 'the Review says it was modified');
         const feed = JSON.parse((await req(h, 'GET', '/feed.json')).text);
         assert.ok(feed.items[0].summary.startsWith(`Correction: ${NOTE}\n${NEW}`), JSON.stringify(feed.items[0]));
-        const events = outbox(h);
+        const events = await outbox(h);
         const upd = events.filter((x) => x.event_type === 'reviews.summary.updated');
         assert.strictEqual(upd.length, 1);
         assert.deepStrictEqual(upd[0].payload.correction, { note: NOTE, corrects: 1 });
@@ -149,20 +149,20 @@ t('a rejected correction creates no revision; editors correct with plain forms, 
         assert.match(desk, /name="correction_note"/, 'the desk asks for the public note when a summary is published');
         const rej = await req(h, 'POST', `/editor/corrections/${c1.id}`, { cookie: ed, form: { status: 'rejected', note: 'opinion, not an error', correction_note: 'ignored when rejecting' } });
         assert.strictEqual(rej.status, 303);
-        assert.strictEqual(h.db.prepare('SELECT status FROM review_corrections WHERE id = ?').get(c1.id).status, 'rejected');
-        assert.strictEqual(revCount(h, summaryId), 1, 'rejecting creates no revision');
-        assert.ok(!outbox(h).some((x) => x.event_type === 'reviews.summary.updated'));
+        assert.strictEqual((await h.db.prepare('SELECT status FROM review_corrections WHERE id = ?').get(c1.id)).status, 'rejected');
+        assert.strictEqual(await revCount(h, summaryId), 1, 'rejecting creates no revision');
+        assert.ok(!(await outbox(h)).some((x) => x.event_type === 'reviews.summary.updated'));
 
         // From the desk: accept with a note, the published text carried forward as a correction revision.
         const c2 = await submit(h, e, 'The signal table lists a review that its source has since edited.');
         const short = await req(h, 'POST', `/editor/corrections/${c2.id}`, { cookie: ed, form: { status: 'accepted', correction_note: 'fixed' } });
         assert.strictEqual(short.status, 422, 'a correction note is a sentence readers can use');
-        assert.strictEqual(revCount(h, summaryId), 1);
+        assert.strictEqual(await revCount(h, summaryId), 1);
         const acc = await req(h, 'POST', `/editor/corrections/${c2.id}`, { cookie: ed, form: { status: 'accepted', correction_note: 'Checked the cited signals against their sources; the text stands.' } });
         assert.strictEqual(acc.status, 303);
-        const r2 = h.db.prepare('SELECT content, meta FROM review_summary_revisions WHERE entity_id = ? AND number = 2').get(summaryId);
+        const r2 = await h.db.prepare('SELECT content, meta FROM review_summary_revisions WHERE entity_id = ? AND number = 2').get(summaryId);
         assert.strictEqual(r2.content, OLD, 'carried forward');
-        assert.strictEqual(JSON.parse(r2.meta).correction.note, 'Checked the cited signals against their sources; the text stands.');
+        assert.strictEqual((typeof r2.meta === 'string' ? JSON.parse(r2.meta) : r2.meta).correction.note, 'Checked the cited signals against their sources; the text stands.');
 
         // From the edit page, answering a request: the form names it and accepts it on publish.
         const c3 = await submit(h, e, 'Only three of the four sampled reviewers recommend it, not all of them.');
@@ -174,8 +174,8 @@ t('a rejected correction creates no revision; editors correct with plain forms, 
             con_text_0: 'Not by everyone', con_signals_0: neg, correction_id: c3.id, correction_note: NOTE, expected_revision: '2', publish: '0',
         } });
         assert.strictEqual(fixed.status, 303, fixed.text.slice(0, 400));
-        assert.strictEqual(h.db.prepare('SELECT status FROM review_corrections WHERE id = ?').get(c3.id).status, 'accepted');
-        const s = h.db.prepare('SELECT * FROM review_summaries WHERE entity_id = ?').get(e.id);
+        assert.strictEqual((await h.db.prepare('SELECT status FROM review_corrections WHERE id = ?').get(c3.id)).status, 'accepted');
+        const s = await h.db.prepare('SELECT * FROM review_summaries WHERE entity_id = ?').get(e.id);
         assert.strictEqual(s.published_revision, 3, 'a correction is published at once');
 
         // An editor corrects without any request.
@@ -203,7 +203,7 @@ t('a correction of approved AI text is AI-assisted, never "written by a person"'
     try {
         const e = await createEntity(h, { name: 'Portal 2', kind: 'game', aliases: [{ type: 'source', value: 'steam-reviews-portal-2' }] });
         for (const v of [true, true, false]) await importItem(h, steamItem({ votedUp: v }));
-        const sigs = h.db.prepare("SELECT id FROM review_signals WHERE status = 'active'").all().map((s) => s.id);
+        const sigs = (await h.db.prepare("SELECT id FROM review_signals WHERE status = 'active'").all()).map((s) => s.id);
         const p = await req(h, 'POST', `/api/v1/entities/${e.slug}/summary/proposals`, { token: serviceToken({ client: 'ai', cap: ['reviews.summary.propose'] }), body: {
             overview: 'All sampled reviewers recommend it.', overview_signals: sigs, workflow: { id: 'reviews.summarize_entity', run_id: 'run_01J9ZZZZZZZZZZZZZZZZZZZZZZ', version: 1 },
         } });

@@ -12,6 +12,7 @@ const path = require('path');
 const { serviceAuth, ids } = require('openvibe-contracts');
 const { signDelivery, signDeliveryHeaders } = require('openvibe-sdk/events');
 const { load } = require('../server/config');
+const { testDb } = require('./db');
 const { start } = require('../server/index');
 
 const ISSUER = 'https://network.test';
@@ -41,7 +42,7 @@ function serviceToken({ client = 'ai', cap = [], aud = 'openvibe.reviews', exp =
     return serviceAuth.signServiceToken({ iss: ISSUER, sub: sub || `svc:${client}`, actor_type: actorType, aud: [aud], cap, ns: [], iat: now, exp: now + exp, jti: `tok_${crypto.randomBytes(8).toString('hex')}`, ...app, ...extra }, privateKey);
 }
 
-const quiet = { log() {}, warn() {}, error() {} };
+const quiet = { log() {}, warn() {}, error: (...a) => { if (process.env.VERBOSE) console.error(...a); } };
 
 /** In-memory OpenVibe.Sources: items in change order, sources, removal. */
 function fakeSources() {
@@ -73,9 +74,9 @@ function fakeSources() {
             let m = u.pathname.match(/^\/api\/v1\/items\/(itm_[0-9A-Z]+)$/);
             if (m) {
                 const it = items.get(m[1]);
-                if (!it) return json(404, { code: 'sources.not_found' });
+                if (!it) return await json(404, { code: 'sources.not_found' });
                 const s = sources.get(it.source_key);
-                return json(200, { item: it, source: s ? { key: s.key, status: s.status, stale: s.stale, last_success_at: s.last_success_at } : null });
+                return await json(200, { item: it, source: s ? { key: s.key, status: s.status, stale: s.stale, last_success_at: s.last_success_at } : null });
             }
             if (u.pathname === '/api/v1/items') {
                 const after = Number(u.searchParams.get('after') || 0);
@@ -84,11 +85,11 @@ function fakeSources() {
                 const page = all.slice(0, limit);
                 const srcs = {};
                 for (const i of page) { const s = sources.get(i.source_key); if (s) srcs[s.key] = { status: s.status, stale: s.stale, last_success_at: s.last_success_at }; }
-                return json(200, { items: page, next_after: page.length ? page[page.length - 1].change_seq : after, more: all.length > limit, sources: srcs });
+                return await json(200, { items: page, next_after: page.length ? page[page.length - 1].change_seq : after, more: all.length > limit, sources: srcs });
             }
             m = u.pathname.match(/^\/api\/v1\/sources\/([a-z0-9-]+)$/);
-            if (m) { const s = sources.get(m[1]); return s ? json(200, { source: s }) : json(404, { code: 'sources.not_found' }); }
-            return json(404, { code: 'not_found' });
+            if (m) { const s = sources.get(m[1]); return s ? await json(200, { source: s }) : await json(404, { code: 'sources.not_found' }); }
+            return await json(404, { code: 'not_found' });
         },
     };
     return api;
@@ -130,16 +131,16 @@ function fakeCommunity() {
                 const ref = JSON.parse(opts.body).ref;
                 const key = `${ref.service}:${ref.type}:${ref.id}`;
                 if (!threads.has(key)) threads.set(key, { id: `thr_${threads.size + 1}`, comments: [] });
-                return json(201, { thread: { id: threads.get(key).id, visibility: 'public' }, created: true });
+                return await json(201, { thread: { id: threads.get(key).id, visibility: 'public' }, created: true });
             }
             const m = u.pathname.match(/^\/api\/v1\/comments\/threads\/([^/]+)(\/comments)?$/);
             if (m) {
                 const t = [...threads.values()].find((x) => x.id === m[1]);
-                if (!t) return json(404, { code: 'thread.not_found' });
-                if (m[2]) { t.comments.push({ id: t.comments.length + 1, message: JSON.parse(opts.body).message, display_name: 'reader', created_at: '2026-09-21T10:00:00.000Z' }); return json(201, { comment: t.comments[t.comments.length - 1] }); }
-                return json(200, { thread: { id: t.id }, comments: t.comments });
+                if (!t) return await json(404, { code: 'thread.not_found' });
+                if (m[2]) { t.comments.push({ id: t.comments.length + 1, message: JSON.parse(opts.body).message, display_name: 'reader', created_at: '2026-09-21T10:00:00.000Z' }); return await json(201, { comment: t.comments[t.comments.length - 1] }); }
+                return await json(200, { thread: { id: t.id }, comments: t.comments });
             }
-            return json(404, {});
+            return await json(404, {});
         },
     };
 }
@@ -165,12 +166,14 @@ async function boot({ env = {}, sources = fakeSources(), community = null, dbPat
         if (host === 'community.test' && community) return community.fetch(url, opts);
         throw new Error(`unexpected outbound fetch ${url}`);
     };
+    // One database per boot (PGlite, or REVIEWS_TEST_STORE=pg: the containers), dropped when the boot stops.
+    const testdb = await testDb();
     const h = await start({
-        config, publicKey, log, listen: true, workers, rateLimits, limitsNow, now, fetchImpl,
+        config, db: testdb.db, publicKey, log, listen: true, workers, rateLimits, limitsNow, now, fetchImpl,
         tokens: { getToken: async () => 'stub-token', authHeaders: async () => ({ Authorization: 'Bearer stub-token' }), invalidate() {} },
     });
     const base = `http://127.0.0.1:${h.server.address().port}`;
-    return { ...h, base, dir, sources, community };
+    return { ...h, stop: async () => { await h.stop(); await testdb.close(); }, base, dir, sources, community };
 }
 
 async function req(h, method, p, { token, body, form, headers = {}, cookie } = {}) {
@@ -195,8 +198,8 @@ async function req(h, method, p, { token, body, form, headers = {}, cookie } = {
 const cookieFor = (token) => `ov_token=${token}`;
 
 /** Every envelope in the outbox, oldest first. */
-function outbox(h) {
-    return h.db.prepare('SELECT envelope FROM review_event_outbox ORDER BY id').all().map((r) => JSON.parse(r.envelope));
+async function outbox(h) {
+    return (await h.db.prepare('SELECT envelope FROM review_event_outbox ORDER BY id').all()).map((r) => (typeof r.envelope === 'string' ? JSON.parse(r.envelope) : r.envelope));
 }
 
 const IMPORT = () => serviceToken({ client: 'sources-sync', cap: ['reviews.signal.import'] });
@@ -222,7 +225,7 @@ async function createEntity(h, body) {
 async function deliver(h, envelope, { secret = WEBHOOK_SECRET, v1Only = false, now } = {}) {
     const raw = JSON.stringify({ event: envelope, seq: 1 });
     const headers = v1Only ? { 'X-OpenVibe-Signature': signDelivery(raw, secret) } : signDeliveryHeaders(raw, secret, { now });
-    return req(h, 'POST', '/internal/events', { body: raw, headers });
+    return await req(h, 'POST', '/internal/events', { body: raw, headers });
 }
 
 function sourcesEvent(type, item, extra = {}) {

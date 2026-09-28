@@ -17,9 +17,10 @@ const { createKeyStore } = require('./auth/keys');
 const { createViewerResolver } = require('./auth/viewer');
 const { createApp } = require('./app');
 
-async function start({ config, now = () => Date.now(), fetchImpl = globalThis.fetch, tokens = null, publicKey = null, log = console, listen = true, workers = listen, rateLimits = true, limitsNow = null } = {}) {
+async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, tokens = null, publicKey = null, log = console, listen = true, workers = listen, rateLimits = true, limitsNow = null } = {}) {
     config = config || load();
-    const db = openDb(config.dbPath);
+    // PostgreSQL (ADR-035): opened and migrated here unless the caller (a test) hands in a migrated handle.
+    const db = givenDb || await openDb(config, { log });
     const stores = createStores(db, { now });
     const platform = createPlatform({ config, db, fetchImpl, tokens, now, log });
     const svc = createReviewsService({ db, stores, outbox: platform.outbox, config, now, log });
@@ -30,7 +31,7 @@ async function start({ config, now = () => Date.now(), fetchImpl = globalThis.fe
     const app = createApp({ config, svc, viewers, platform, sync, keys, db, log, rateLimits, fetchImpl, limitsNow });
 
     // Search holds whatever the current rules say (idempotent: unchanged documents are not re-sent).
-    try { svc.reconcileIndex(); } catch (err) { log.warn(`[Reviews] index reconcile: ${err.message}`); }
+    try { await svc.reconcileIndex(); } catch (err) { log.warn(`[Reviews] index reconcile: ${err.message}`); }
 
     const timers = [];
     if (workers) {
@@ -55,7 +56,7 @@ async function start({ config, now = () => Date.now(), fetchImpl = globalThis.fe
         for (const t of timers) { clearInterval(t); clearTimeout(t); }
         await platform.outbox.stop();
         if (server) await new Promise((resolve) => server.close(resolve));
-        db.close();
+        if (!givenDb) await db.close();
     }
     return { app, db, svc, sync, stores, platform, keys, viewers, server, config, stop };
 }

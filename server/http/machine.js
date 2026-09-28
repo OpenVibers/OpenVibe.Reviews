@@ -27,12 +27,12 @@ function createMachine({ svc, config }) {
         }));
     });
 
-    function entityEntries() {
-        return svc.publicEntities().map(({ entity, decision }) => ({ loc: svc.entityUrl(entity), lastmod: entity.updated_at, decision }));
+    async function entityEntries() {
+        return (await svc.publicEntities()).map(({ entity, decision }) => ({ loc: svc.entityUrl(entity), lastmod: entity.updated_at, decision }));
     }
 
-    router.get('/sitemap.xml', (_req, res) => {
-        const pages = seo.sitemap(entityEntries(), { maxUrls: PER_SITEMAP });
+    router.get('/sitemap.xml', async (_req, res) => {
+        const pages = seo.sitemap(await entityEntries(), { maxUrls: PER_SITEMAP });
         const maps = [{ loc: `${origin}/sitemaps/pages.xml` }];
         pages.files.forEach((_f, i) => maps.push({ loc: `${origin}/sitemaps/entities-${i + 1}.xml` }));
         cache(res).type('application/xml').send(seo.sitemapIndex(maps));
@@ -42,15 +42,15 @@ function createMachine({ svc, config }) {
         const entries = ['/', '/about'].map((p) => ({ loc: seo.canonicalUrl(origin, p), decision: seo.evaluate({ state: 'published', visibility: 'public', canonicalUrl: seo.canonicalUrl(origin, p), wordCount: 0 }, { policy, now: Date.now() }) }));
         cache(res).type('application/xml').send(seo.sitemap(entries).files[0]);
     });
-    router.get('/sitemaps/entities-:n.xml', (req, res) => {
-        const files = seo.sitemap(entityEntries(), { maxUrls: PER_SITEMAP }).files;
+    router.get('/sitemaps/entities-:n.xml', async (req, res) => {
+        const files = seo.sitemap(await entityEntries(), { maxUrls: PER_SITEMAP }).files;
         const n = Number(req.params.n);
         if (!Number.isInteger(n) || n < 1 || n > files.length) return res.status(404).type('text/plain').send('Not found');
         cache(res).type('application/xml').send(files[n - 1]);
     });
 
-    function feedItems() {
-        return svc.recentSummaries(50).map(({ summary, entity, rev, decision }) => ({
+    async function feedItems() {
+        return (await svc.recentSummaries(50)).map(({ summary, entity, rev, decision }) => ({
             id: `tag:openvibe.reviews,2026:summary/${summary.id}/revision/${summary.published_revision}`,
             url: `${svc.entityUrl(entity)}#summary`,
             title: `${entity.name}: summary`,
@@ -63,13 +63,13 @@ function createMachine({ svc, config }) {
         }));
     }
 
-    router.get('/feed.atom', (_req, res) => {
-        const items = feedItems();
+    router.get('/feed.atom', async (_req, res) => {
+        const items = await feedItems();
         if (!items.some((i) => i.decision.listable)) return res.status(404).set('Cache-Control', 'public, max-age=60').type('text/plain').send('No summary has been published yet.');
         cache(res).type('application/atom+xml').send(seo.atomFeed({ title: 'OpenVibe.Reviews: published summaries', link: `${origin}/`, feedUrl: `${origin}/feed.atom`, id: `${origin}/feed.atom` }, items));
     });
-    router.get('/feed.json', (_req, res) => {
-        cache(res).type('application/feed+json').send(JSON.stringify(seo.jsonFeed({ title: 'OpenVibe.Reviews: published summaries', link: `${origin}/`, feedUrl: `${origin}/feed.json`, description: 'Editor-reviewed summaries, by the time their current revision was published.' }, feedItems())));
+    router.get('/feed.json', async (_req, res) => {
+        cache(res).type('application/feed+json').send(JSON.stringify(seo.jsonFeed({ title: 'OpenVibe.Reviews: published summaries', link: `${origin}/`, feedUrl: `${origin}/feed.json`, description: 'Editor-reviewed summaries, by the time their current revision was published.' }, await feedItems())));
     });
 
     router.get('/llms.txt', (_req, res) => {

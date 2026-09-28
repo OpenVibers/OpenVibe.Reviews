@@ -97,7 +97,7 @@ function createViewerResolver({ keys, config }) {
             const payload = decodePayload(token);
             if (payload && typeof payload.sub === 'string' && PRINCIPAL_SUB.test(payload.sub)) {
                 if (opts.services === false) return ANONYMOUS;
-                return fromServiceToken(req, token);
+                return await fromServiceToken(req, token);
             }
             return (await fromUserToken(token, { strict: true })) || ANONYMOUS;
         }

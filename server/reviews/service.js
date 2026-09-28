@@ -12,6 +12,7 @@
  *
  * Methods take an actor (server/reviews/access.js) and throw ReviewsError (status + stable code).
  */
+const { AsyncLocalStorage } = require('async_hooks');
 const seo = require('openvibe-publishing/seo');
 const hooks = require('openvibe-publishing/index-hooks');
 const authorship = require('openvibe-publishing/authorship');
@@ -66,11 +67,12 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         insertEntity: db.prepare(`INSERT INTO review_entities (id, slug, name, kind, description, created_by, created_at, updated_at)
                                   VALUES (@id, @slug, @name, @kind, @description, @created_by, @now, @now)`),
         mergedInto: db.prepare("SELECT id FROM review_entities WHERE merged_into = ? AND state = 'merged'"),
-        listActive: db.prepare(`SELECT e.* FROM review_entities e WHERE e.state = 'active' ORDER BY e.name COLLATE NOCASE LIMIT ? OFFSET ?`),
+        listActive: db.prepare(`SELECT e.* FROM review_entities e WHERE e.state = 'active' ORDER BY lower(e.name) LIMIT ? OFFSET ?`),
         countActive: db.prepare("SELECT COUNT(*) AS n FROM review_entities WHERE state = 'active'"),
-        searchEntities: db.prepare(`SELECT DISTINCT e.* FROM review_entities e LEFT JOIN review_entity_aliases a ON a.entity_id = e.id AND a.removed_at IS NULL AND a.type = 'name'
-                                    WHERE e.state = 'active' AND (e.name LIKE @like ESCAPE '\\' OR a.norm LIKE @nlike ESCAPE '\\')
-                                    ORDER BY e.name COLLATE NOCASE LIMIT @limit`),
+        searchEntities: db.prepare(`SELECT e.* FROM review_entities e
+                                    WHERE e.state = 'active' AND (e.name ILIKE @like ESCAPE '\\'
+                                          OR EXISTS (SELECT 1 FROM review_entity_aliases a WHERE a.entity_id = e.id AND a.removed_at IS NULL AND a.type = 'name' AND a.norm ILIKE @nlike ESCAPE '\\'))
+                                    ORDER BY lower(e.name) LIMIT @limit`),
         alias: db.prepare('SELECT * FROM review_entity_aliases WHERE id = ?'),
         aliasesOf: db.prepare('SELECT * FROM review_entity_aliases WHERE entity_id = ? AND removed_at IS NULL ORDER BY type, norm'),
         strongAlias: db.prepare("SELECT * FROM review_entity_aliases WHERE type = ? AND norm = ? AND removed_at IS NULL AND type != 'name'"),
@@ -132,7 +134,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                                     revision_published_at = @now, flagged = 0, flag_reason = NULL, flagged_at = NULL, updated_at = @now WHERE id = @id`),
         unpublishSummary: db.prepare("UPDATE review_summaries SET state = 'unpublished', updated_at = ? WHERE id = ?"),
         flagSummary: db.prepare('UPDATE review_summaries SET flagged = 1, flag_reason = ?, flagged_at = ?, updated_at = ? WHERE id = ?'),
-        insertCitation: db.prepare('INSERT OR IGNORE INTO review_summary_citations (summary_id, revision, point, signal_id) VALUES (?, ?, ?, ?)'),
+        insertCitation: db.prepare('INSERT INTO review_summary_citations (summary_id, revision, point, signal_id) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING'),
         citationsOf: db.prepare('SELECT * FROM review_summary_citations WHERE summary_id = ? AND revision = ? ORDER BY point, signal_id'),
         summariesCiting: db.prepare('SELECT DISTINCT summary_id FROM review_summary_citations WHERE signal_id = ?'),
         flaggedSummaries: db.prepare('SELECT * FROM review_summaries WHERE flagged = 1 ORDER BY flagged_at DESC LIMIT 200'),
@@ -153,7 +155,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
 
     // ── Small helpers ────────────────────────────────────────
     const fail = (status, code, message, extra) => { throw new ReviewsError(status, code, message, extra); };
-    const tx = (fn) => db.transaction(fn)();
+    const tx = async (fn) => await db.tx(() => fn());   // ambient: plain db calls inside join it
     const entityPath = (e) => `/e/${encodeURIComponent(e.slug)}`;
     const entityUrl = (e) => seo.canonicalUrl(origin, entityPath(e));
     const parse = (s, d) => { try { return s == null ? d : JSON.parse(s); } catch { return d; } };
@@ -180,58 +182,58 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         if (v && typeof v === 'object' && depth < 4) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, clipText(x, depth + 1)]));
         return v;
     }
-    function audit(actor, action, entityId, target, detail = {}) {
-        q.audit.run(now(), typeof actor === 'string' ? actor : actorId(actor), action, entityId || null, target || null, JSON.stringify(clipText(detail)));
+    async function audit(actor, action, entityId, target, detail = {}) {
+        await q.audit.run(now(), typeof actor === 'string' ? actor : actorId(actor), action, entityId || null, target || null, JSON.stringify(clipText(detail)));
     }
-    function emit(envelope) { return outbox.enqueue(envelope); }
+    async function emit(envelope) { return await outbox.enqueue(db, envelope); }
 
-    function entityOrFail(ref) {
+    async function entityOrFail(ref) {
         const s = String(ref == null ? '' : ref);
-        const e = ENTITY_ID_RE.test(s) ? q.entity.get(s) : q.entityBySlug.get(s);
+        const e = ENTITY_ID_RE.test(s) ? await q.entity.get(s) : await q.entityBySlug.get(s);
         if (!e) fail(404, 'entity.not_found', 'No such entity');
         return e;
     }
 
     /** The entity a merged entity now lives under (follows merged_into). */
-    function canonicalOf(entityId) {
-        let e = q.entity.get(entityId);
+    async function canonicalOf(entityId) {
+        let e = await q.entity.get(entityId);
         const seen = new Set();
-        while (e && e.state === 'merged' && e.merged_into && !seen.has(e.id)) { seen.add(e.id); e = q.entity.get(e.merged_into); }
+        while (e && e.state === 'merged' && e.merged_into && !seen.has(e.id)) { seen.add(e.id); e = await q.entity.get(e.merged_into); }
         return e ? e.id : null;
     }
 
     /** The entity and every entity merged into it, transitively. */
-    function closure(entityId) {
+    async function closure(entityId) {
         const out = new Set([entityId]);
         const stack = [entityId];
         while (stack.length) {
             const id = stack.pop();
-            for (const r of q.mergedInto.all(id)) if (!out.has(r.id)) { out.add(r.id); stack.push(r.id); }
+            for (const r of await q.mergedInto.all(id)) if (!out.has(r.id)) { out.add(r.id); stack.push(r.id); }
         }
         return out;
     }
 
-    function activeSignalsIn(ids) {
+    async function activeSignalsIn(ids) {
         const out = [];
-        for (const id of ids) out.push(...q.activeSignalsOfEntity.all(id));
+        for (const id of ids) out.push(...await q.activeSignalsOfEntity.all(id));
         return out.sort((a, b) => (a.observed_at < b.observed_at ? 1 : a.observed_at > b.observed_at ? -1 : (a.id < b.id ? 1 : -1)));
     }
-    function allSignalsIn(ids) {
+    async function allSignalsIn(ids) {
         const out = [];
-        for (const id of ids) out.push(...q.signalsOfEntity.all(id));
+        for (const id of ids) out.push(...await q.signalsOfEntity.all(id));
         return out.sort((a, b) => (a.observed_at < b.observed_at ? 1 : a.observed_at > b.observed_at ? -1 : (a.id < b.id ? 1 : -1)));
     }
 
     // ── Aggregates ───────────────────────────────────────────
-    function exclusions() {
+    async function exclusions() {
         return {
-            sources: new Map(q.excludedSources.all().map((r) => [r.scope_id, r.note])),
-            signals: new Map(q.excludedSignals.all().map((r) => [r.scope_id, r.note])),
+            sources: new Map((await q.excludedSources.all()).map((r) => [r.scope_id, r.note])),
+            signals: new Map((await q.excludedSignals.all()).map((r) => [r.scope_id, r.note])),
         };
     }
 
-    function computeFor(canonicalId) {
-        return computeAggregate(activeSignalsIn(closure(canonicalId)), { exclusions: exclusions() });
+    async function computeFor(canonicalId) {
+        return computeAggregate(await activeSignalsIn(await closure(canonicalId)), { exclusions: await exclusions() });
     }
 
     /**
@@ -239,18 +241,18 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
      * to nothing (every signal gone) is recorded as a revision whose result is null; an entity
      * that never had a qualifying signal has no aggregate row at all.
      */
-    function refreshAggregate(entityId, trigger) {
-        const canon = canonicalOf(entityId);
-        const e = canon && q.entity.get(canon);
+    async function refreshAggregate(entityId, trigger) {
+        const canon = await canonicalOf(entityId);
+        const e = canon && await q.entity.get(canon);
         if (!e || e.state !== 'active') return null;
-        const result = computeFor(canon);
+        const result = await computeFor(canon);
         const hash = hashOf(result);
-        const last = q.lastAggregate.get(canon);
+        const last = await q.lastAggregate.get(canon);
         if (last && last.inputs_hash === hash) return last;
         if (!last && result === null) return null;
         const revision = last ? last.revision + 1 : 1;
-        q.insertAggregate.run(canon, revision, now(), String(trigger).slice(0, 60), hash, result ? JSON.stringify(result) : null);
-        return q.lastAggregate.get(canon);
+        await q.insertAggregate.run(canon, revision, now(), String(trigger).slice(0, 60), hash, result ? JSON.stringify(result) : null);
+        return await q.lastAggregate.get(canon);
     }
 
     function aggregateView(row) {
@@ -275,20 +277,20 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
     }
 
     /** For each point of a revision: which cited signals are still active and belong to the entity. */
-    function citationState(canonicalId, rev) {
-        const members = closure(canonicalId);
-        return summaryPoints(rev).map((p) => {
-            const cites = p.signals.map((id) => {
-                const s = q.signal.get(id);
+    async function citationState(canonicalId, rev) {
+        const members = await closure(canonicalId);
+        return Promise.all(summaryPoints(rev).map(async (p) => {
+            const cites = (await Promise.all(p.signals.map(async (id) => {
+                const s = await q.signal.get(id);
                 const ok = !!(s && s.status === 'active' && members.has(s.entity_id));
                 return { signal_id: id, ok, status: s ? s.status : 'missing', in_entity: !!(s && members.has(s.entity_id)), superseded_by: s ? s.superseded_by : null };
-            });
+            })));
             return { ...p, cites, supported: cites.some((c) => c.ok) };
-        });
+        }));
     }
 
-    function unsupportedCount(canonicalId, rev) {
-        return citationState(canonicalId, rev).filter((p) => !p.supported).length;
+    async function unsupportedCount(canonicalId, rev) {
+        return (await citationState(canonicalId, rev)).filter((p) => !p.supported).length;
     }
 
     function cleanPoints(list, what) {
@@ -311,7 +313,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
     }
 
     /** Validates a summary body. Every cited signal must be active and belong to the entity. */
-    function checkSummaryInput(canonicalId, input, { ai = false } = {}) {
+    async function checkSummaryInput(canonicalId, input, { ai = false } = {}) {
         if (!input || typeof input !== 'object') fail(422, 'summary.invalid', 'A summary is { overview, pros, cons }');
         for (const k of Object.keys(input)) {
             if (RATING_KEY_RE.test(k)) fail(422, 'summary.rating_forbidden', `${k}: a summary carries no rating; ratings come only from source signals`);
@@ -329,28 +331,28 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                 if (RATING_TEXT_RE.test(t)) fail(422, 'summary.rating_in_text', 'AI-drafted text states no rating or star count; the aggregate comes only from source signals');
             }
         }
-        const members = closure(canonicalId);
+        const members = await closure(canonicalId);
         for (const id of [...overviewSignals, ...pros.flatMap((p) => p.signals), ...cons.flatMap((p) => p.signals)]) {
             if (!SIGNAL_ID_RE.test(id)) fail(422, 'summary.invalid_citation', `${id} is not a signal id`);
-            const s = q.signal.get(id);
+            const s = await q.signal.get(id);
             if (!s || !members.has(s.entity_id)) fail(422, 'summary.invalid_citation', `Signal ${id} does not belong to this entity`);
             if (s.status !== 'active') fail(422, 'summary.invalid_citation', `Signal ${id} is ${s.status}; cite the current signal`);
         }
         return { content: overview, fields: { pros, cons, overview_signals: overviewSignals } };
     }
 
-    function ensureSummary(entityId) {
-        let s = q.summary.get(entityId);
+    async function ensureSummary(entityId) {
+        let s = await q.summary.get(entityId);
         if (!s) {
             const t = now();
-            q.insertSummary.run(`sum_${ulid(t)}`, entityId, t, t);
-            s = q.summary.get(entityId);
+            await q.insertSummary.run(`sum_${ulid(t)}`, entityId, t, t);
+            s = await q.summary.get(entityId);
         }
         return s;
     }
 
-    function writeCitations(summary, rev) {
-        for (const p of summaryPoints(rev)) for (const id of p.signals) q.insertCitation.run(summary.id, rev.number, p.key, id);
+    async function writeCitations(summary, rev) {
+        for (const p of summaryPoints(rev)) for (const id of p.signals) await q.insertCitation.run(summary.id, rev.number, p.key, id);
     }
 
     function expectedOf(input, head) {
@@ -359,9 +361,9 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         return head;
     }
 
-    function createRevision(args) {
+    async function createRevision(args) {
         try {
-            return revisions.create(args).revision;
+            return (await revisions.create(args)).revision;
         } catch (err) {
             if (err && err.code === 'revision.conflict') fail(412, 'revision.conflict', err.message, { expected: err.expected, current: err.current });
             throw err;
@@ -404,41 +406,41 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
      * forward. An open correction request it answers is accepted in the same transaction; what the
      * request said and who sent it stay with the editors.
      */
-    function correctSummary(e, input, { note, requestId = null, resolutionNote = null }, actor, who) {
+    async function correctSummary(e, input, { note, requestId = null, resolutionNote = null }, actor, who) {
         const text = checkCorrectionNote(note);
-        const summary = q.summary.get(e.id);
+        const summary = await q.summary.get(e.id);
         if (!summary || summary.state !== 'published' || !summary.published_revision) fail(409, 'summary.not_published', 'Only a published summary is corrected; save and publish a revision instead');
         let request = null;
         if (requestId != null && String(requestId).trim() !== '') {
-            request = q.correction.get(String(requestId).trim());
+            request = await q.correction.get(String(requestId).trim());
             if (!request) fail(404, 'correction.not_found', 'No such correction');
-            if (canonicalOf(request.entity_id) !== e.id) fail(409, 'correction.other_entity', 'That correction is about another entity');
+            if (await canonicalOf(request.entity_id) !== e.id) fail(409, 'correction.other_entity', 'That correction is about another entity');
             if (request.status !== 'open') fail(409, 'correction.closed', `Already ${request.status}`);
         }
-        const pub = revisions.get(summary.id, summary.published_revision);
-        const body = checkSummaryInput(e.id, BODY_KEYS.some((k) => input[k] !== undefined) ? input : carryForward(pub));
-        const revision = createRevision({
-            entityId: summary.id, expectedRevision: expectedOf(input, revisions.headNumber(summary.id)), content: body.content, fields: body.fields,
+        const pub = await revisions.get(summary.id, summary.published_revision);
+        const body = await checkSummaryInput(e.id, BODY_KEYS.some((k) => input[k] !== undefined) ? input : carryForward(pub));
+        const revision = await createRevision({
+            entityId: summary.id, expectedRevision: expectedOf(input, await revisions.headNumber(summary.id)), content: body.content, fields: body.fields,
             meta: {
                 authorship: correctionAuthorship(pub.meta && pub.meta.authorship, who),
                 correction: { note: text, request: request ? request.id : null, corrects: pub.number },
             },
             author: who, message: input.message ? String(input.message).slice(0, 500) : `Correction: ${text.slice(0, 200)}`, allowUnchanged: true,
         });
-        writeCitations(summary, revision);
-        reviews.record({ entityId: summary.id, revision: revision.number, reviewer: who, decision: 'approved', note: 'correction' });
+        await writeCitations(summary, revision);
+        await reviews.record({ entityId: summary.id, revision: revision.number, reviewer: who, decision: 'approved', note: 'correction' });
         if (request) {
-            q.resolveCorrection.run('accepted', who, resolutionNote, now(), request.id);
-            audit(actor, 'correction.accepted', e.id, request.id, { note: resolutionNote, summary_revision: revision.number });
+            await q.resolveCorrection.run('accepted', who, resolutionNote, now(), request.id);
+            await audit(actor, 'correction.accepted', e.id, request.id, { note: resolutionNote, summary_revision: revision.number });
         }
-        audit(actor, 'summary.corrected', e.id, summary.id, { revision: revision.number, corrects: pub.number, correction_id: request ? request.id : null });
-        svc.publishSummary(e.id, { revision: revision.number }, actor);
-        const fresh = q.summary.get(e.id);
-        return { summary: fresh, revision: summaryRevisionView(fresh, revisions.get(summary.id, revision.number), e.id), published: true, correction: request ? q.correction.get(request.id) : null };
+        await audit(actor, 'summary.corrected', e.id, summary.id, { revision: revision.number, corrects: pub.number, correction_id: request ? request.id : null });
+        await svc.publishSummary(e.id, { revision: revision.number }, actor);
+        const fresh = await q.summary.get(e.id);
+        return { summary: fresh, revision: await summaryRevisionView(fresh, await revisions.get(summary.id, revision.number), e.id), published: true, correction: request ? await q.correction.get(request.id) : null };
     }
 
-    function revisionStatus(summary, rev) {
-        const review = reviews.latest(summary.id, rev.number);
+    async function revisionStatus(summary, rev) {
+        const review = await reviews.latest(summary.id, rev.number);
         const rec = rev.meta && rev.meta.authorship;
         if (summary.state === 'published' && summary.published_revision === rev.number) return 'published';
         if (review && review.decision === 'rejected') return 'rejected';
@@ -452,36 +454,36 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
      * What a reader may see of a summary's history: revisions up to the published one while the
      * summary is published, never a rejected revision or an AI draft no person approved.
      */
-    function publicRevision(summary, rev) {
+    async function publicRevision(summary, rev) {
         if (!summary || summary.state !== 'published' || !summary.published_revision || rev.number > summary.published_revision) return false;
-        const review = reviews.latest(summary.id, rev.number);
+        const review = await reviews.latest(summary.id, rev.number);
         if (review && review.decision === 'rejected') return false;
         const rec = rev.meta && rev.meta.authorship;
         return !(rec && !authorship.canPublish(rec, review).ok);
     }
 
-    function pendingRevisions(summary) {
-        const head = revisions.headNumber(summary.id);
+    async function pendingRevisions(summary) {
+        const head = await revisions.headNumber(summary.id);
         const out = [];
         for (let n = (summary.published_revision || 0) + 1; n <= head; n++) {
-            const rev = revisions.get(summary.id, n);
-            const st = revisionStatus(summary, rev);
+            const rev = await revisions.get(summary.id, n);
+            const st = await revisionStatus(summary, rev);
             if (st !== 'rejected') out.push({ rev, status: st });
         }
         return out;
     }
 
     // ── The gate, the Search document ────────────────────────
-    function publishedSummaryRevision(entityId) {
-        const s = q.summary.get(entityId);
+    async function publishedSummaryRevision(entityId) {
+        const s = await q.summary.get(entityId);
         if (!s || s.state !== 'published' || !s.published_revision) return { summary: s || null, rev: null };
-        return { summary: s, rev: revisions.get(s.id, s.published_revision) };
+        return { summary: s, rev: await revisions.get(s.id, s.published_revision) };
     }
 
-    function gateFacts(e) {
-        const members = closure(e.id);
-        const active = activeSignalsIn(members);
-        const { summary, rev } = publishedSummaryRevision(e.id);
+    async function gateFacts(e) {
+        const members = await closure(e.id);
+        const active = await activeSignalsIn(members);
+        const { summary, rev } = await publishedSummaryRevision(e.id);
         const rec = rev && rev.meta && rev.meta.authorship;
         return {
             state: e.state === 'deleted' ? 'deleted' : 'published',
@@ -489,29 +491,29 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             canonicalUrl: entityUrl(e),
             wordCount: rev ? ssr.wordCount(summaryText(rev)) : 0,
             citationCount: active.length,
-            unsupportedClaims: rev ? unsupportedCount(e.id, rev) : 0,
+            unsupportedClaims: rev ? await unsupportedCount(e.id, rev) : 0,
             noindex: !!e.noindex,
-            ...(rec ? authorship.gateFacts(rec, reviews.latest(summary.id, rev.number)) : {}),
+            ...(rec ? authorship.gateFacts(rec, await reviews.latest(summary.id, rev.number)) : {}),
         };
     }
 
-    function decide(e) {
-        return seo.evaluate(gateFacts(e), { policy, now: now() });
+    async function decide(e) {
+        return seo.evaluate(await gateFacts(e), { policy, now: now() });
     }
 
     /** Sends Search the entity's current document (or a tombstone) when it differs from the last one. */
-    function syncEntity(entityId) {
-        const e = q.entity.get(entityId);
+    async function syncEntity(entityId) {
+        const e = await q.entity.get(entityId);
         if (!e) return null;
         const live = e.state === 'active';
-        const decision = live ? decide(e) : null;
-        const before = sequencer.current('reviews', 'entity', e.id);
-        const { rev } = live ? publishedSummaryRevision(e.id) : { rev: null };
-        const agg = live ? aggregateView(q.lastAggregate.get(e.id)) : null;
-        const signals = live ? activeSignalsIn(closure(e.id)) : [];
+        const decision = live ? await decide(e) : null;
+        const before = await sequencer.current('reviews', 'entity', e.id);
+        const { rev } = live ? await publishedSummaryRevision(e.id) : { rev: null };
+        const agg = live ? aggregateView(await q.lastAggregate.get(e.id)) : null;
+        const signals = live ? await activeSignalsIn(await closure(e.id)) : [];
         const lines = [];
         if (agg && agg.result) lines.push(...agg.result.computation);
-        const doc = sequencer.stamp(hooks.buildIndexDocument({
+        const doc = await sequencer.stamp(db, hooks.buildIndexDocument({
             owner: 'reviews', type: 'entity', id: e.id, revision: 0,
             state: e.state === 'deleted' ? 'deleted' : 'published', visibility: 'public',
             deleted: !live || !decision || !decision.listable,
@@ -524,52 +526,48 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             decision,
             publishedAt: e.created_at, updatedAt: e.updated_at,
         }));
-        if (doc.revision !== before) emit(hooks.indexEvent({ document: doc, now: now() }));
+        if (doc.revision !== before) await emit(hooks.indexEvent({ document: doc, now: now() }));
         return doc;
     }
 
-    function touchEntity(entityId) {
-        db.prepare('UPDATE review_entities SET updated_at = ? WHERE id = ?').run(now(), entityId);
+    async function touchEntity(entityId) {
+        await db.prepare('UPDATE review_entities SET updated_at = ? WHERE id = ?').run(now(), entityId);
     }
 
     // Inside batch() (a sync page, an alias that settles many items) the aggregate of each touched
     // entity is recomputed once at the end: one editorial action or one Sources page → at most one
     // new aggregate revision per entity.
-    let batchDepth = 0;
-    const dirty = new Map();
-    function flushEntity(canon, trigger) {
-        refreshAggregate(canon, trigger);
-        touchEntity(canon);
-        syncEntity(canon);
+    // Per batch (AsyncLocalStorage): concurrent requests each keep their own dirty set, and a batch inside a batch
+    // leaves the flush to the outermost one.
+    const batchScope = new AsyncLocalStorage();
+    async function flushEntity(canon, trigger) {
+        await refreshAggregate(canon, trigger);
+        await touchEntity(canon);
+        await syncEntity(canon);
     }
-    function batch(fn) {
-        return tx(() => {
-            batchDepth++;
-            try {
-                return fn();
-            } finally {
-                batchDepth--;
-                if (batchDepth === 0) {
-                    const list = [...dirty];
-                    dirty.clear();
-                    for (const [canon, trigger] of list) flushEntity(canon, trigger);
-                }
-            }
+    async function batch(fn) {
+        if (batchScope.getStore()) return await fn();
+        const dirty = new Map();
+        return await tx(async () => {
+            const out = await batchScope.run(dirty, fn);
+            for (const [canon, trigger] of dirty) await flushEntity(canon, trigger);
+            return out;
         });
     }
 
     /** After signals of an entity changed: next aggregate revision, Search document. */
-    function afterSignalChange(entityId, trigger) {
-        const canon = canonicalOf(entityId);
+    async function afterSignalChange(entityId, trigger) {
+        const canon = await canonicalOf(entityId);
         if (!canon) return;
-        if (batchDepth > 0) { if (!dirty.has(canon)) dirty.set(canon, trigger); return; }
-        flushEntity(canon, trigger);
+        const dirty = batchScope.getStore();
+        if (dirty) { if (!dirty.has(canon)) dirty.set(canon, trigger); return; }
+        await flushEntity(canon, trigger);
     }
 
     // ── Events ───────────────────────────────────────────────
-    function signalPayload(s) {
+    async function signalPayload(s) {
         const p = {
-            signal_id: s.id, entity_id: s.entity_id, canonical_entity_id: canonicalOf(s.entity_id), type: s.type,
+            signal_id: s.id, entity_id: s.entity_id, canonical_entity_id: await canonicalOf(s.entity_id), type: s.type,
             source_key: s.source_key, source_item_id: s.source_item_id, item_revision: s.item_revision,
             observed_at: s.observed_at, source_published_at: s.source_published_at, canonical_url: s.canonical_url, license_note: s.license_note,
         };
@@ -578,17 +576,17 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         if (s.type === 'rating' || s.type === 'rating_aggregate') { p.rating_value = s.rating_value; p.rating_best = s.rating_best; p.rating_worst = s.rating_worst; p.rating_count = s.rating_count; }
         return p;
     }
-    function signalEvent(type, s, actor, extra = {}) {
-        emit({
+    async function signalEvent(type, s, actor, extra = {}) {
+        await emit({
             event_type: type,
             actor: hooks.subjectRef(actorId(actor)),
             subject: { type: 'signal', id: s.id },
             visibility: 'public',
-            payload: { ...signalPayload(s), ...extra },
+            payload: { ...await signalPayload(s), ...extra },
         });
     }
-    function entityEvent(type, e, actor, payload) {
-        emit({ event_type: type, actor: hooks.subjectRef(actorId(actor)), subject: { type: 'entity', id: e.id }, visibility: 'public', payload });
+    async function entityEvent(type, e, actor, payload) {
+        await emit({ event_type: type, actor: hooks.subjectRef(actorId(actor)), subject: { type: 'entity', id: e.id }, visibility: 'public', payload });
     }
 
     // ── Summary flags when cited signals leave ───────────────
@@ -599,71 +597,71 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
      * left without a live citation are dropped. The pending revision is published only after an
      * editor approves it; until then the published text stays up with the flag shown next to it.
      */
-    function flagSummary(summaryId, reason, signalIds) {
-        const s = q.summaryById.get(summaryId);
+    async function flagSummary(summaryId, reason, signalIds) {
+        const s = await q.summaryById.get(summaryId);
         if (!s) return null;
-        const canon = canonicalOf(s.entity_id);
-        const e = q.entity.get(s.entity_id);
+        const canon = await canonicalOf(s.entity_id);
+        const e = await q.entity.get(s.entity_id);
         if (!e || e.state !== 'active') return null;
-        const headN = revisions.headNumber(s.id);
+        const headN = await revisions.headNumber(s.id);
         if (!headN) return null;
-        const head = revisions.get(s.id, headN);
+        const head = await revisions.get(s.id, headN);
         const base = s.published_revision && !(headN > s.published_revision && head.meta && head.meta.system)
-            ? revisions.get(s.id, s.published_revision) : head;
-        const state = citationState(canon, base);
+            ? await revisions.get(s.id, s.published_revision) : head;
+        const state = await citationState(canon, base);
         if (state.every((p) => p.cites.every((c) => c.ok))) return null;
-        const members = closure(canon);
-        const carry = (id) => {
-            let sig = q.signal.get(id);
+        const members = await closure(canon);
+        const carry = async (id) => {
+            let sig = await q.signal.get(id);
             const seen = new Set();
-            while (sig && sig.status === 'superseded' && sig.superseded_by && !seen.has(sig.id)) { seen.add(sig.id); sig = q.signal.get(sig.superseded_by); }
+            while (sig && sig.status === 'superseded' && sig.superseded_by && !seen.has(sig.id)) { seen.add(sig.id); sig = await q.signal.get(sig.superseded_by); }
             return sig && sig.status === 'active' && members.has(sig.entity_id) ? sig.id : null;
         };
-        const mapPoints = (list) => (list || []).map((p) => ({ text: p.text, signals: [...new Set(p.signals.map(carry).filter(Boolean))] }));
+        const mapPoints = (list) => Promise.all((list || []).map(async (p) => ({ text: p.text, signals: [...new Set((await Promise.all(p.signals.map(carry))).filter(Boolean))] })));
         const f = base.fields || {};
-        const pros = mapPoints(f.pros);
-        const cons = mapPoints(f.cons);
-        const overviewSignals = [...new Set((f.overview_signals || []).map(carry).filter(Boolean))];
+        const pros = await mapPoints(f.pros);
+        const cons = await mapPoints(f.cons);
+        const overviewSignals = [...new Set((await Promise.all((f.overview_signals || []).map(carry))).filter(Boolean))];
         const dropped = [...pros, ...cons].filter((p) => !p.signals.length).map((p) => p.text);
         const t = now();
-        q.flagSummary.run(String(reason).slice(0, 300), t, t, s.id);
-        const { revision } = revisions.create({
+        await q.flagSummary.run(String(reason).slice(0, 300), t, t, s.id);
+        const { revision } = await revisions.create({
             entityId: s.id, expectedRevision: headN, content: base.content,
             fields: { pros: pros.filter((p) => p.signals.length), cons: cons.filter((p) => p.signals.length), overview_signals: overviewSignals },
             meta: { ...(base.meta && base.meta.authorship ? { authorship: base.meta.authorship } : {}), system: { reason: String(reason).slice(0, 300), signals: signalIds, base_revision: base.number, dropped_points: dropped } },
             author: 'svc:reviews', message: `Pending: ${reason}`, allowUnchanged: true,
         });
-        writeCitations(s, revision);
-        audit('svc:reviews', 'summary.flagged', s.entity_id, s.id, { reason, signals: signalIds, pending_revision: revision.number, dropped_points: dropped.length });
-        syncEntity(canon);
+        await writeCitations(s, revision);
+        await audit('svc:reviews', 'summary.flagged', s.entity_id, s.id, { reason, signals: signalIds, pending_revision: revision.number, dropped_points: dropped.length });
+        await syncEntity(canon);
         return revision;
     }
 
-    function flagSummariesCiting(signalIds, reason) {
+    async function flagSummariesCiting(signalIds, reason) {
         const ids = new Set();
-        for (const sid of signalIds) for (const r of q.summariesCiting.all(sid)) ids.add(r.summary_id);
-        for (const id of ids) flagSummary(id, reason, signalIds);
+        for (const sid of signalIds) for (const r of await q.summariesCiting.all(sid)) ids.add(r.summary_id);
+        for (const id of ids) await flagSummary(id, reason, signalIds);
     }
 
     // ── Signals ──────────────────────────────────────────────
-    function withdrawSignal(sig, reason, actor, { status = 'withdrawn', supersededBy = null } = {}) {
-        const r = q.setSignalStatus.run({ id: sig.id, status, reason: String(reason).slice(0, 500), at: now(), superseded_by: supersededBy });
+    async function withdrawSignal(sig, reason, actor, { status = 'withdrawn', supersededBy = null } = {}) {
+        const r = await q.setSignalStatus.run({ id: sig.id, status, reason: String(reason).slice(0, 500), at: now(), superseded_by: supersededBy });
         if (!r.changes) return false;
-        signalEvent('reviews.signal.removed', q.signal.get(sig.id), actor, { status, reason: String(reason).slice(0, 500), ...(supersededBy ? { replaced_by: supersededBy } : {}) });
+        await signalEvent('reviews.signal.removed', await q.signal.get(sig.id), actor, { status, reason: String(reason).slice(0, 500), ...(supersededBy ? { replaced_by: supersededBy } : {}) });
         return true;
     }
 
     /** A new signal for an item revision; the item's previous active signal is superseded. */
-    function createSignal(itemRow, entityId, sig, actor) {
-        const prev = q.activeSignalOfItem.get(itemRow.id);
+    async function createSignal(itemRow, entityId, sig, actor) {
+        const prev = await q.activeSignalOfItem.get(itemRow.id);
         if (prev && prev.item_revision === itemRow.item_revision && prev.entity_id === entityId) return { signal: prev, created: false };
         const t = now();
         const id = `sig_${ulid(t)}`;
         if (prev) {
             const why = prev.entity_id !== entityId ? 'reattributed by an editor' : `source item revised (r${prev.item_revision} → r${itemRow.item_revision})`;
-            withdrawSignal(prev, why, actor, prev.entity_id !== entityId ? {} : { status: 'superseded', supersededBy: id });
+            await withdrawSignal(prev, why, actor, prev.entity_id !== entityId ? {} : { status: 'superseded', supersededBy: id });
         }
-        q.insertSignal.run({
+        await q.insertSignal.run({
             id, entity_id: entityId, source_item_id: itemRow.id, source_key: itemRow.source_key, item_revision: itemRow.item_revision,
             type: sig.type, recommended: sig.recommended == null ? null : sig.recommended,
             positive_count: sig.positive_count == null ? null : sig.positive_count, total_count: sig.total_count == null ? null : sig.total_count,
@@ -672,13 +670,13 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             observed_at: itemRow.retrieved_at, source_published_at: itemRow.published_at, canonical_url: itemRow.canonical_url,
             license_note: itemRow.license_note, trust: JSON.stringify(sig.trust || {}), created_by: actorId(actor), now: t,
         });
-        const signal = q.signal.get(id);
-        signalEvent('reviews.signal.added', signal, actor, prev ? { replaces: prev.id } : {});
+        const signal = await q.signal.get(id);
+        await signalEvent('reviews.signal.added', signal, actor, prev ? { replaces: prev.id } : {});
         if (prev) {
-            flagSummariesCiting([prev.id], prev.entity_id !== entityId ? 'A cited signal was reattributed to another entity' : 'A cited signal was replaced by a newer revision of its source item');
-            if (canonicalOf(prev.entity_id) !== canonicalOf(entityId)) afterSignalChange(prev.entity_id, 'signal_reattributed');
+            await flagSummariesCiting([prev.id], prev.entity_id !== entityId ? 'A cited signal was reattributed to another entity' : 'A cited signal was replaced by a newer revision of its source item');
+            if (await canonicalOf(prev.entity_id) !== await canonicalOf(entityId)) await afterSignalChange(prev.entity_id, 'signal_reattributed');
         }
-        afterSignalChange(entityId, prev ? 'signal_replaced' : 'signal_added');
+        await afterSignalChange(entityId, prev ? 'signal_replaced' : 'signal_added');
         return { signal, created: true, replaced: prev ? prev.id : null };
     }
 
@@ -690,15 +688,15 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
      * give candidates, and a name is never enough on its own → ambiguous (an editor confirms).
      * Nothing → unmatched (an editor creates or picks the entity).
      */
-    function resolveIdentifiers({ strong = [], names = [] }) {
+    async function resolveIdentifiers({ strong = [], names = [] }) {
         const hits = [];
         for (const id of strong) {
             const n = norm.tryAlias(id.type, id.value);
             if (!n) continue;
-            const a = q.strongAlias.get(id.type, n);
+            const a = await q.strongAlias.get(id.type, n);
             if (a) {
-                const e = q.entity.get(a.entity_id);
-                if (e && e.state !== 'deleted') hits.push({ rule: id.type, alias_id: a.id, entity_id: a.entity_id, canonical: canonicalOf(a.entity_id) });
+                const e = await q.entity.get(a.entity_id);
+                if (e && e.state !== 'deleted') hits.push({ rule: id.type, alias_id: a.id, entity_id: a.entity_id, canonical: await canonicalOf(a.entity_id) });
             }
         }
         const canon = [...new Set(hits.map((h) => h.canonical))];
@@ -708,9 +706,9 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         for (const name of names) {
             const n = norm.tryAlias('name', name);
             if (!n) continue;
-            for (const a of q.nameAliases.all(n)) {
-                const c = canonicalOf(a.entity_id);
-                const e = c && q.entity.get(c);
+            for (const a of await q.nameAliases.all(n)) {
+                const c = await canonicalOf(a.entity_id);
+                const e = c && await q.entity.get(c);
                 if (e && e.state === 'active' && !named.some((x) => x.entity_id === c)) named.push({ entity_id: c, rule: 'name' });
             }
         }
@@ -722,37 +720,37 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         return extract.identifiers({ source_key: row.source_key, canonical_url: row.canonical_url, kind: row.kind, title: row.title, fields: parse(row.fields, {}) });
     }
 
-    function setItemResolution(row, r, by) {
-        q.setResolution.run({ id: row.id, resolution: r.resolution, entity_id: r.entity_id, rule: r.rule, candidates: JSON.stringify(r.candidates || []), by, at: r.resolution === 'resolved' ? now() : null, now: now() });
-        return q.item.get(row.id);
+    async function setItemResolution(row, r, by) {
+        await q.setResolution.run({ id: row.id, resolution: r.resolution, entity_id: r.entity_id, rule: r.rule, candidates: JSON.stringify(r.candidates || []), by, at: r.resolution === 'resolved' ? now() : null, now: now() });
+        return await q.item.get(row.id);
     }
 
     /** Create/replace/withdraw the item's signal to match its current content and resolution. */
-    function reconcileItemSignal(row, actor) {
-        const active = q.activeSignalOfItem.get(row.id);
+    async function reconcileItemSignal(row, actor) {
+        const active = await q.activeSignalOfItem.get(row.id);
         if (row.state !== 'active' || row.resolution !== 'resolved') {
             if (active) {
-                withdrawSignal(active, row.state !== 'active' ? `removed by its source: ${row.removed_reason || 'no reason given'}` : 'the item is no longer attributed to this entity', actor);
-                flagSummariesCiting([active.id], row.state !== 'active' ? 'A cited signal was withdrawn: its source removed the item' : 'A cited signal was withdrawn');
-                afterSignalChange(active.entity_id, 'signal_withdrawn');
+                await withdrawSignal(active, row.state !== 'active' ? `removed by its source: ${row.removed_reason || 'no reason given'}` : 'the item is no longer attributed to this entity', actor);
+                await flagSummariesCiting([active.id], row.state !== 'active' ? 'A cited signal was withdrawn: its source removed the item' : 'A cited signal was withdrawn');
+                await afterSignalChange(active.entity_id, 'signal_withdrawn');
             }
             return { signal: null };
         }
         const { signal } = extract.extractSignal({ kind: row.kind, fields: parse(row.fields, {}) });
         if (!signal) {
             if (active) {
-                withdrawSignal(active, `the source no longer states a signal (${row.signal_note || 'no value'})`, actor);
-                flagSummariesCiting([active.id], 'A cited signal was withdrawn: its source no longer states it');
-                afterSignalChange(active.entity_id, 'signal_withdrawn');
+                await withdrawSignal(active, `the source no longer states a signal (${row.signal_note || 'no value'})`, actor);
+                await flagSummariesCiting([active.id], 'A cited signal was withdrawn: its source no longer states it');
+                await afterSignalChange(active.entity_id, 'signal_withdrawn');
             }
             return { signal: null };
         }
-        return createSignal(row, row.entity_id, signal, actor);
+        return await createSignal(row, row.entity_id, signal, actor);
     }
 
-    function upsertSource(key, prov, info) {
+    async function upsertSource(key, prov, info) {
         const t = now();
-        const existing = q.source.get(key);
+        const existing = await q.source.get(key);
         const values = {
             key, name: info && info.name ? String(info.name).slice(0, 300) : null,
             homepage_url: info && info.homepage_url ? String(info.homepage_url).slice(0, 1000) : null,
@@ -764,8 +762,8 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             last_success_at: info && info.last_success_at ? String(info.last_success_at) : null,
             now: t,
         };
-        if (existing) q.updateSource.run(values); else q.insertSource.run(values);
-        return q.source.get(key);
+        if (existing) await q.updateSource.run(values); else await q.insertSource.run(values);
+        return await q.source.get(key);
     }
 
     function checkItem(item) {
@@ -784,21 +782,21 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
      * nothing but the last-seen time. Synchronous (runs inside the caller's transaction).
      * → { outcome, item, signal }
      */
-    function applyItem(item, { sourceInfo = null, actor = { kind: 'system', service: 'svc:reviews' } } = {}) {
+    async function applyItem(item, { sourceInfo = null, actor = { kind: 'system', service: 'svc:reviews' } } = {}) {
         checkItem(item);
         if (item.category && item.category !== 'reviews') return { outcome: 'ignored:category', item: null, signal: null };
         const prov = item.provenance;
         const t = now();
-        return tx(() => {
-            upsertSource(item.source_key, prov, sourceInfo);
-            let row = q.item.get(item.id);
+        return await tx(async () => {
+            await upsertSource(item.source_key, prov, sourceInfo);
+            let row = await q.item.get(item.id);
             const retrievedAt = new Date(prov.retrieved_at).toISOString();
             if (item.removed) {
                 const reason = String((item.removed && item.removed.reason) || 'removed').slice(0, 500);
                 if (!row) {
                     // Known only as removed: kept for the record, never a signal.
                     const fields = extract.keptFields(item);
-                    q.insertItem.run({
+                    await q.insertItem.run({
                         id: item.id, source_key: item.source_key, kind: String(item.kind || 'unknown').slice(0, 40), identity: String(item.identity || item.id).slice(0, 2048),
                         canonical_url: item.canonical_url || null, title: extract.keptTitle(item), item_revision: item.revision, content_hash: prov.content_hash,
                         published_at: item.published_at || null, retrieved_at: retrievedAt, parser_version: prov.parser_version || null,
@@ -806,19 +804,19 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                         state: 'removed', removed_at: item.removed.at || retrievedAt, removed_reason: reason, resolution: 'unmatched', entity_id: null,
                         resolution_rule: null, candidates: '[]', resolved_by: null, resolved_at: null, signal_note: 'removed by its source before Reviews read it', now: t,
                     });
-                    return { outcome: 'removed:unknown', item: q.item.get(item.id), signal: null };
+                    return { outcome: 'removed:unknown', item: await q.item.get(item.id), signal: null };
                 }
                 if (row.state === 'removed') return { outcome: 'unchanged', item: row, signal: null };
-                q.removeItem.run(item.removed.at || retrievedAt, reason, t, row.id);
-                row = q.item.get(row.id);
-                reconcileItemSignal(row, actor);
+                await q.removeItem.run(item.removed.at || retrievedAt, reason, t, row.id);
+                row = await q.item.get(row.id);
+                await reconcileItemSignal(row, actor);
                 return { outcome: 'removed', item: row, signal: null };
             }
             if (row && row.state === 'removed') return { outcome: 'ignored:removed', item: row, signal: null };
             if (row && item.revision < row.item_revision) return { outcome: 'ignored:older_revision', item: row, signal: null };
             if (row && item.revision === row.item_revision && row.content_hash === prov.content_hash) {
-                q.touchItem.run(retrievedAt, t, row.id, retrievedAt);
-                return { outcome: 'unchanged', item: q.item.get(row.id), signal: q.activeSignalOfItem.get(row.id) || null };
+                await q.touchItem.run(retrievedAt, t, row.id, retrievedAt);
+                return { outcome: 'unchanged', item: await q.item.get(row.id), signal: await q.activeSignalOfItem.get(row.id) || null };
             }
             const fields = extract.keptFields(item);
             const { note } = extract.extractSignal(item);
@@ -830,38 +828,38 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             };
             let outcome;
             if (!row) {
-                q.insertItem.run({ ...values, state: 'active', removed_at: null, removed_reason: null, resolution: 'unmatched', entity_id: null, resolution_rule: null, candidates: '[]', resolved_by: null, resolved_at: null });
+                await q.insertItem.run({ ...values, state: 'active', removed_at: null, removed_reason: null, resolution: 'unmatched', entity_id: null, resolution_rule: null, candidates: '[]', resolved_by: null, resolved_at: null });
                 outcome = 'created';
             } else {
-                q.updateItemContent.run(values);
+                await q.updateItemContent.run(values);
                 outcome = 'updated';
             }
-            row = q.item.get(item.id);
-            if (row.resolution === 'unmatched' || row.resolution === 'ambiguous') row = setItemResolution(row, resolveIdentifiers(itemIdentifiers(row)), 'rule');
-            const out = reconcileItemSignal(row, actor);
-            return { outcome, item: q.item.get(item.id), signal: out.signal || null };
+            row = await q.item.get(item.id);
+            if (row.resolution === 'unmatched' || row.resolution === 'ambiguous') row = await setItemResolution(row, await resolveIdentifiers(itemIdentifiers(row)), 'rule');
+            const out = await reconcileItemSignal(row, actor);
+            return { outcome, item: await q.item.get(item.id), signal: out.signal || null };
         });
     }
 
     /** New aliases may settle items that waited: re-run the rules for every unresolved item. */
-    function reresolvePending(actor) {
-        return batch(() => {
+    async function reresolvePending(actor) {
+        return await batch(async () => {
             let settled = 0;
-            for (const row of q.unresolvedItems.all()) {
-                const r = resolveIdentifiers(itemIdentifiers(row));
+            for (const row of await q.unresolvedItems.all()) {
+                const r = await resolveIdentifiers(itemIdentifiers(row));
                 if (r.resolution === row.resolution && JSON.stringify(r.candidates) === row.candidates) continue;
-                const fresh = setItemResolution(row, r, 'rule');
-                if (fresh.resolution === 'resolved') { reconcileItemSignal(fresh, actor); settled++; }
+                const fresh = await setItemResolution(row, r, 'rule');
+                if (fresh.resolution === 'resolved') { await reconcileItemSignal(fresh, actor); settled++; }
             }
             return settled;
         });
     }
 
     // ── Entities ─────────────────────────────────────────────
-    function uniqueSlug(base) {
+    async function uniqueSlug(base) {
         const root = norm.slug(base) || 'entity';
         let s = root;
-        for (let i = 2; q.entityBySlug.get(s) || redirects.resolve(`/e/${s}`, { currentPath: () => null }); i++) s = `${root}-${i}`.slice(0, 90);
+        for (let i = 2; await q.entityBySlug.get(s) || await redirects.resolve(`/e/${s}`, { currentPath: () => null }); i++) s = `${root}-${i}`.slice(0, 90);
         return s;
     }
 
@@ -873,46 +871,46 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         return t;
     }
 
-    function insertAlias(entityId, type, value, actor) {
+    async function insertAlias(entityId, type, value, actor) {
         if (!ALIAS_TYPES.includes(type)) fail(422, 'alias.invalid', `alias type is one of ${ALIAS_TYPES.join(', ')}`);
         let n;
         try { n = norm.alias(type, value); } catch (err) { fail(422, 'alias.invalid', err.message); }
         if (type !== 'name') {
-            const taken = q.strongAlias.get(type, n);
+            const taken = await q.strongAlias.get(type, n);
             if (taken) {
                 if (taken.entity_id === entityId) return taken;
-                const other = q.entity.get(taken.entity_id);
+                const other = await q.entity.get(taken.entity_id);
                 fail(409, 'alias.taken', `${type} ${value} already identifies "${other ? other.name : taken.entity_id}"`, { entity_id: taken.entity_id });
             }
-        } else if (q.nameAliases.all(n).some((a) => a.entity_id === entityId)) {
-            return q.nameAliases.all(n).find((a) => a.entity_id === entityId);
+        } else if ((await q.nameAliases.all(n)).some((a) => a.entity_id === entityId)) {
+            return (await q.nameAliases.all(n)).find((a) => a.entity_id === entityId);
         }
         const t = now();
         const id = `als_${ulid(t)}`;
-        q.insertAlias.run({ id, entity_id: entityId, type, value: String(value).trim().slice(0, 1000), norm: n, by: actorId(actor), now: t });
-        return q.alias.get(id);
+        await q.insertAlias.run({ id, entity_id: entityId, type, value: String(value).trim().slice(0, 1000), norm: n, by: actorId(actor), now: t });
+        return await q.alias.get(id);
     }
 
-    function entityView(e) {
+    async function entityView(e) {
         return {
             id: e.id, slug: e.slug, name: e.name, kind: e.kind, description: e.description, state: e.state,
-            merged_into: e.merged_into, canonical_id: canonicalOf(e.id), noindex: !!e.noindex,
+            merged_into: e.merged_into, canonical_id: await canonicalOf(e.id), noindex: !!e.noindex,
             url: entityUrl(e), created_at: toIso(e.created_at), updated_at: toIso(e.updated_at),
         };
     }
 
-    function trustMap(scope, id) {
+    async function trustMap(scope, id) {
         const out = {};
-        for (const r of q.trustCurrent.all(scope, id)) out[r.key] = { value: r.value, note: r.note, set_at: toIso(r.set_at) };
+        for (const r of await q.trustCurrent.all(scope, id)) out[r.key] = { value: r.value, note: r.note, set_at: toIso(r.set_at) };
         return out;
     }
 
-    function signalView(s) {
-        const item = q.item.get(s.source_item_id);
-        const src = q.source.get(s.source_key);
+    async function signalView(s) {
+        const item = await q.item.get(s.source_item_id);
+        const src = await q.source.get(s.source_key);
         return {
-            ...signalPayload(s), status: s.status, status_reason: s.status_reason, status_at: toIso(s.status_at), superseded_by: s.superseded_by,
-            trust: parse(s.trust, {}), editor_trust: trustMap('signal', s.id), created_at: toIso(s.created_at),
+            ...await signalPayload(s), status: s.status, status_reason: s.status_reason, status_at: toIso(s.status_at), superseded_by: s.superseded_by,
+            trust: parse(s.trust, {}), editor_trust: await trustMap('signal', s.id), created_at: toIso(s.created_at),
             provenance: {
                 source_key: s.source_key, source_name: src ? src.name : null, source_homepage: src ? src.homepage_url : null,
                 source_item_id: s.source_item_id, item_revision: s.item_revision, item_kind: item ? item.kind : null,
@@ -924,13 +922,13 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
     }
 
     /** `editor: false` (a reader): the person who wrote it is "an editor", as in the editorial log. */
-    function summaryRevisionView(summary, rev, canonicalId, { editor = true } = {}) {
+    async function summaryRevisionView(summary, rev, canonicalId, { editor = true } = {}) {
         if (!rev) return null;
         const rec = rev.meta && rev.meta.authorship;
-        const review = reviews.latest(summary.id, rev.number);
+        const review = await reviews.latest(summary.id, rev.number);
         return {
-            number: rev.number, status: revisionStatus(summary, rev), overview: rev.content,
-            points: citationState(canonicalId, rev).map((p) => ({ key: p.key, kind: p.kind, text: p.kind === 'overview' ? null : p.text, supported: p.supported, citations: p.cites })),
+            number: rev.number, status: await revisionStatus(summary, rev), overview: rev.content,
+            points: (await citationState(canonicalId, rev)).map((p) => ({ key: p.key, kind: p.kind, text: p.kind === 'overview' ? null : p.text, supported: p.supported, citations: p.cites })),
             authorship: rec ? { mode: rec.mode, workflow: rec.workflow || null, stub_provider: !!rec.stubProvider } : null,
             disclosure: rec ? authorship.disclosure(rec, review) : null,
             review: review ? { decision: review.decision, reviewed_at: review.reviewedAt } : null,
@@ -947,12 +945,14 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
     }
 
     /** The summary's history as readers may see it, newest first (entity page). */
-    function publicHistory(summary) {
+    async function publicHistory(summary) {
         if (!summary) return [];
-        return revisions.list(summary.id, { limit: 200 }).filter((r) => publicRevision(summary, r)).map((r) => {
-            const d = r.meta && r.meta.authorship ? authorship.disclosure(r.meta.authorship, reviews.latest(summary.id, r.number)) : null;
-            return { number: r.number, status: revisionStatus(summary, r), created_at: r.createdAt, disclosure: d ? d.short : null, correction: correctionView(r) };
-        });
+        const listed = await revisions.list(summary.id, { limit: 200 });
+        const shown = await Promise.all(listed.map(async (r) => await publicRevision(summary, r)));
+        return (await Promise.all(listed.filter((r, i) => shown[i]).map(async (r) => {
+            const d = r.meta && r.meta.authorship ? authorship.disclosure(r.meta.authorship, await reviews.latest(summary.id, r.number)) : null;
+            return { number: r.number, status: await revisionStatus(summary, r), created_at: r.createdAt, disclosure: d ? d.short : null, correction: correctionView(r) };
+        })));
     }
 
     // Audit detail readers never see: which correction request it was, what it said, how editors resolved it.
@@ -970,19 +970,19 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         ENTITY_KINDS, ALIAS_TYPES, LINK_TYPES, TRUST_KEYS, SUMMARY_WORKFLOW,
 
         // Lookups ----------------------------------------------------------------------------
-        findEntity(ref) { const s = String(ref || ''); return (ENTITY_ID_RE.test(s) ? q.entity.get(s) : q.entityBySlug.get(s)) || null; },
-        entity(ref) { return entityOrFail(ref); },
-        entityById(id) { return q.entity.get(id) || null; },
-        resolveRedirect(path) {
-            return redirects.resolve(path, { currentPath: (id) => { const e = q.entity.get(id); return e && e.state !== 'deleted' ? entityPath(e) : null; } });
+        async findEntity(ref) { const s = String(ref || ''); return (ENTITY_ID_RE.test(s) ? await q.entity.get(s) : await q.entityBySlug.get(s)) || null; },
+        async entity(ref) { return await entityOrFail(ref); },
+        async entityById(id) { return await q.entity.get(id) || null; },
+        async resolveRedirect(path) {
+            return await redirects.resolve(path, { currentPath: async (id) => { const e = await q.entity.get(id); return e && e.state !== 'deleted' ? entityPath(e) : null; } });
         },
-        listEntities({ limit = 50, offset = 0 } = {}) { return { entities: q.listActive.all(Math.min(200, limit), Math.max(0, offset)), total: q.countActive.get().n }; },
-        search(text, { limit = 30 } = {}) {
+        async listEntities({ limit = 50, offset = 0 } = {}) { return { entities: await q.listActive.all(Math.min(200, limit), Math.max(0, offset)), total: (await q.countActive.get()).n }; },
+        async search(text, { limit = 30 } = {}) {
             const s = String(text || '').trim().slice(0, 200);
             if (!s) return [];
             const esc = (x) => x.replace(/[\\%_]/g, (c) => `\\${c}`);
             const n = norm.tryAlias('name', s) || s.toLowerCase();
-            return q.searchEntities.all({ like: `%${esc(s)}%`, nlike: `%${esc(n)}%`, limit: Math.min(100, limit) });
+            return await q.searchEntities.all({ like: `%${esc(s)}%`, nlike: `%${esc(n)}%`, limit: Math.min(100, limit) });
         },
         entityView,
         signalView,
@@ -991,215 +991,215 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         gateFacts,
 
         /** Everything the entity page shows. `e` must be active (callers redirect merged entities). */
-        page(e, actor) {
-            const members = closure(e.id);
-            const signals = allSignalsIn(members);
+        async page(e, actor) {
+            const members = await closure(e.id);
+            const signals = await allSignalsIn(members);
             const active = signals.filter((s) => s.status === 'active');
-            const agg = aggregateView(q.lastAggregate.get(e.id));
-            const summary = q.summary.get(e.id) || null;
-            const pub = summary && summary.state === 'published' && summary.published_revision ? revisions.get(summary.id, summary.published_revision) : null;
+            const agg = aggregateView(await q.lastAggregate.get(e.id));
+            const summary = await q.summary.get(e.id) || null;
+            const pub = summary && summary.state === 'published' && summary.published_revision ? await revisions.get(summary.id, summary.published_revision) : null;
             const sourceKeys = [...new Set(signals.map((s) => s.source_key))].sort();
             const editor = access.isEditor(actor);
             return {
-                entity: entityView(e),
-                aliases: q.aliasesOf.all(e.id).map((a) => ({ id: a.id, type: a.type, value: a.value })),
-                merged_from: [...members].filter((id) => id !== e.id).map((id) => entityView(q.entity.get(id))),
-                links: [...q.linksFrom.all(e.id), ...q.linksTo.all(e.id)].map((l) => ({
+                entity: await entityView(e),
+                aliases: (await q.aliasesOf.all(e.id)).map((a) => ({ id: a.id, type: a.type, value: a.value })),
+                merged_from: (await Promise.all([...members].filter((id) => id !== e.id).map(async (id) => await entityView(await q.entity.get(id))))),
+                links: (await Promise.all([...await q.linksFrom.all(e.id), ...await q.linksTo.all(e.id)].map(async (l) => ({
                     id: l.id, type: l.type, from: l.from_entity, to: l.to_entity, ref: parse(l.ref, null), note: l.note,
-                    other: l.to_entity ? entityView(q.entity.get(l.from_entity === e.id ? l.to_entity : l.from_entity)) : null,
+                    other: l.to_entity ? await entityView(await q.entity.get(l.from_entity === e.id ? l.to_entity : l.from_entity)) : null,
                     direction: l.from_entity === e.id ? 'out' : 'in', created_at: toIso(l.created_at),
-                })),
+                })))),
                 aggregate: agg && agg.result ? agg : null,
                 aggregate_revision: agg ? agg.revision : null,
-                signals: active.map(signalView),
-                inactive_signals: signals.filter((s) => s.status !== 'active').map(signalView),
-                sources: sourceKeys.map((k) => { const r = q.source.get(k); return { key: k, name: r && r.name, homepage_url: r && r.homepage_url, license_note: r && r.license_note, terms_note: r && r.terms_note, status: r && r.status, stale: r ? r.stale === 1 : null, last_success_at: r && r.last_success_at, trust: trustMap('source', k) }; }),
-                entity_trust: trustMap('entity', e.id),
+                signals: (await Promise.all(active.map(signalView))),
+                inactive_signals: (await Promise.all(signals.filter((s) => s.status !== 'active').map(signalView))),
+                sources: (await Promise.all(sourceKeys.map(async (k) => { const r = await q.source.get(k); return { key: k, name: r && r.name, homepage_url: r && r.homepage_url, license_note: r && r.license_note, terms_note: r && r.terms_note, status: r && r.status, stale: r ? r.stale === 1 : null, last_success_at: r && r.last_success_at, trust: await trustMap('source', k) }; }))),
+                entity_trust: await trustMap('entity', e.id),
                 summary: summary ? {
-                    id: summary.id, state: summary.state, head_revision: revisions.headNumber(summary.id), flagged: !!summary.flagged, flag_reason: summary.flag_reason, flagged_at: toIso(summary.flagged_at),
+                    id: summary.id, state: summary.state, head_revision: await revisions.headNumber(summary.id), flagged: !!summary.flagged, flag_reason: summary.flag_reason, flagged_at: toIso(summary.flagged_at),
                     published_at: toIso(summary.published_at), revision_published_at: toIso(summary.revision_published_at),
-                    published: pub ? summaryRevisionView(summary, pub, e.id, { editor }) : null,
-                    pending: editor ? pendingRevisions(summary).map((p) => summaryRevisionView(summary, p.rev, e.id)) : pendingRevisions(summary).length,
-                    history: publicHistory(summary),
+                    published: pub ? await summaryRevisionView(summary, pub, e.id, { editor }) : null,
+                    pending: editor ? (await Promise.all((await pendingRevisions(summary)).map(async (p) => await summaryRevisionView(summary, p.rev, e.id)))) : (await pendingRevisions(summary)).length,
+                    history: await publicHistory(summary),
                 } : null,
-                open_corrections: q.openCorrectionsOf.get(e.id).n,
-                decision: decide(e),
+                open_corrections: (await q.openCorrectionsOf.get(e.id)).n,
+                decision: await decide(e),
                 editor,
             };
         },
 
-        history(e, actor) {
+        async history(e, actor) {
             const editor = access.isEditor(actor);
             if (e.state === 'deleted' && !editor) fail(410, 'entity.deleted', 'This entity was deleted');
-            const summary = q.summary.get(e.id);
-            const revs = summary ? revisions.list(summary.id, { limit: 200 }) : [];
+            const summary = await q.summary.get(e.id);
+            const revs = summary ? await revisions.list(summary.id, { limit: 200 }) : [];
             return {
-                entity: entityView(e),
-                aggregates: q.aggregates.all(e.id, 200).map(aggregateView),
-                summary_revisions: summary ? revs.filter((r) => editor || publicRevision(summary, r))
-                    .map((r) => summaryRevisionView(summary, r, e.id, { editor })) : [],
-                merges: q.mergeLinksOf.all(e.id, e.id).map((l) => ({
-                    id: l.id, from: entityView(q.entity.get(l.from_entity)), to: entityView(q.entity.get(l.to_entity)), note: l.note,
+                entity: await entityView(e),
+                aggregates: (await q.aggregates.all(e.id, 200)).map(aggregateView),
+                summary_revisions: summary ? (await Promise.all((await Promise.all(revs.map(async (r) => ((editor || await publicRevision(summary, r)) ? r : null)))).filter(Boolean)
+                    .map(async (r) => await summaryRevisionView(summary, r, e.id, { editor })))) : [],
+                merges: (await Promise.all((await q.mergeLinksOf.all(e.id, e.id)).map(async (l) => ({
+                    id: l.id, from: await entityView(await q.entity.get(l.from_entity)), to: await entityView(await q.entity.get(l.to_entity)), note: l.note,
                     merged_at: toIso(l.created_at), merged_by: editor ? l.created_by : null, split_at: toIso(l.ended_at), split_by: editor ? l.ended_by : null, split_note: l.end_note,
-                })),
-                signals: allSignalsIn(closure(e.id)).map(signalView),
-                audit: q.auditOf.all(e.id, e.id).map((r) => ({
+                })))),
+                signals: (await Promise.all((await allSignalsIn(await closure(e.id))).map(signalView))),
+                audit: (await q.auditOf.all(e.id, e.id)).map((r) => ({
                     id: r.id, at: toIso(r.at), action: r.action, target: editor || !/^correction\./.test(r.action) ? r.target : null,
                     actor: editor ? r.actor : (/^usr_/.test(r.actor) ? 'an editor' : r.actor), detail: auditDetail(r, editor),
                 })),
             };
         },
 
-        summaryRevision(e, n, actor) {
+        async summaryRevision(e, n, actor) {
             if (e.state === 'deleted' && !access.isEditor(actor)) fail(410, 'entity.deleted', 'This entity was deleted');
-            const summary = q.summary.get(e.id);
+            const summary = await q.summary.get(e.id);
             if (!summary) fail(404, 'summary.not_found', 'This entity has no summary');
-            const rev = revisions.get(summary.id, Number(n));
+            const rev = await revisions.get(summary.id, Number(n));
             if (!rev) fail(404, 'revision.not_found', `No revision ${n}`);
             const editor = access.isEditor(actor);
-            if (!editor && !publicRevision(summary, rev)) fail(404, 'revision.not_found', `No revision ${n}`);
-            return summaryRevisionView(summary, rev, e.id, { editor });
+            if (!editor && !await publicRevision(summary, rev)) fail(404, 'revision.not_found', `No revision ${n}`);
+            return await summaryRevisionView(summary, rev, e.id, { editor });
         },
 
         // Resolve (reviews.entity.resolve) ---------------------------------------------------
         /** { name?, url?, sku?, gtin?, mpn?, source?, external? } → { match, entity, via, rule, candidates } */
-        resolve(input = {}) {
+        async resolve(input = {}) {
             const strong = [];
             for (const t of ['source', 'external', 'url', 'gtin', 'sku', 'mpn']) if (input[t]) strong.push({ type: t, value: String(input[t]) });
             const names = input.name ? [String(input.name)] : [];
             if (!strong.length && !names.length) fail(422, 'resolve.empty', 'Give at least one of name, url, gtin, sku, mpn, source, external');
-            const r = resolveIdentifiers({ strong, names });
-            const canon = r.entity_id ? canonicalOf(r.entity_id) : null;
+            const r = await resolveIdentifiers({ strong, names });
+            const canon = r.entity_id ? await canonicalOf(r.entity_id) : null;
             return {
                 match: r.resolution === 'resolved' ? 'exact' : r.resolution === 'ambiguous' ? 'ambiguous' : 'none',
-                entity: canon ? entityView(q.entity.get(canon)) : null,
-                via: r.entity_id && r.entity_id !== canon ? entityView(q.entity.get(r.entity_id)) : null,
+                entity: canon ? await entityView(await q.entity.get(canon)) : null,
+                via: r.entity_id && r.entity_id !== canon ? await entityView(await q.entity.get(r.entity_id)) : null,
                 rule: r.rule,
-                candidates: r.candidates.map((c) => ({ rule: c.rule, entity: entityView(q.entity.get(c.entity_id)) })),
+                candidates: (await Promise.all(r.candidates.map(async (c) => ({ rule: c.rule, entity: await entityView(await q.entity.get(c.entity_id)) })))),
             };
         },
 
         // Entities (editors) -----------------------------------------------------------------
-        createEntity({ name, kind = 'other', description = null, slug = null, aliases = [] } = {}, actor) {
+        async createEntity({ name, kind = 'other', description = null, slug = null, aliases = [] } = {}, actor) {
             requireEditor(actor, 'Creating an entity');
             const clean = checkName(name);
             if (!ENTITY_KINDS.includes(kind)) fail(422, 'entity.invalid_kind', `kind is one of ${ENTITY_KINDS.join(', ')}`);
             if (!Array.isArray(aliases)) fail(422, 'alias.invalid', 'aliases is a list of { type, value }');
-            return tx(() => {
+            return await tx(async () => {
                 const t = now();
                 const id = `ent_${ulid(t)}`;
                 const s = slug ? norm.slug(slug) : null;
                 if (slug && !s) fail(422, 'entity.invalid_slug', 'That slug has no letters or digits');
-                if (s && (q.entityBySlug.get(s))) fail(409, 'entity.slug_taken', `/e/${s} is taken`);
-                const finalSlug = s || uniqueSlug(clean);
-                redirects.release(`/e/${finalSlug}`);
-                q.insertEntity.run({ id, slug: finalSlug, name: clean, kind, description: description ? String(description).trim().slice(0, 2000) || null : null, created_by: actorId(actor), now: t });
-                insertAlias(id, 'name', clean, actor);
-                for (const a of aliases) insertAlias(id, a && a.type, a && a.value, actor);
-                audit(actor, 'entity.created', id, null, { name: clean, kind, aliases });
-                const settled = reresolvePending(actor);
-                syncEntity(id);
-                return { entity: q.entity.get(id), settled_items: settled };
+                if (s && (await q.entityBySlug.get(s))) fail(409, 'entity.slug_taken', `/e/${s} is taken`);
+                const finalSlug = s || await uniqueSlug(clean);
+                await redirects.release(`/e/${finalSlug}`);
+                await q.insertEntity.run({ id, slug: finalSlug, name: clean, kind, description: description ? String(description).trim().slice(0, 2000) || null : null, created_by: actorId(actor), now: t });
+                await insertAlias(id, 'name', clean, actor);
+                for (const a of aliases) await insertAlias(id, a && a.type, a && a.value, actor);
+                await audit(actor, 'entity.created', id, null, { name: clean, kind, aliases });
+                const settled = await reresolvePending(actor);
+                await syncEntity(id);
+                return { entity: await q.entity.get(id), settled_items: settled };
             });
         },
 
-        updateEntity(ref, { name, kind, description, slug, noindex } = {}, actor) {
+        async updateEntity(ref, { name, kind, description, slug, noindex } = {}, actor) {
             requireEditorPerson(actor, 'Editing an entity');
-            return tx(() => {
-                const e = entityOrFail(ref);
+            return await tx(async () => {
+                const e = await entityOrFail(ref);
                 if (e.state !== 'active') fail(409, 'entity.not_active', `This entity is ${e.state}`);
                 const next = { ...e };
                 const changes = {};
-                if (name != null && name !== e.name) { next.name = checkName(name); changes.name = [e.name, next.name]; insertAlias(e.id, 'name', next.name, actor); }
+                if (name != null && name !== e.name) { next.name = checkName(name); changes.name = [e.name, next.name]; await insertAlias(e.id, 'name', next.name, actor); }
                 if (kind != null && kind !== e.kind) { if (!ENTITY_KINDS.includes(kind)) fail(422, 'entity.invalid_kind', `kind is one of ${ENTITY_KINDS.join(', ')}`); next.kind = kind; changes.kind = [e.kind, kind]; }
                 if (description !== undefined && (description || null) !== e.description) { next.description = description ? String(description).trim().slice(0, 2000) || null : null; changes.description = true; }
                 if (noindex != null && !!noindex !== !!e.noindex) { next.noindex = noindex ? 1 : 0; changes.noindex = !!noindex; }
                 if (slug != null && slug !== e.slug) {
                     const s = norm.slug(slug);
                     if (!s) fail(422, 'entity.invalid_slug', 'That slug has no letters or digits');
-                    const other = q.entityBySlug.get(s);
+                    const other = await q.entityBySlug.get(s);
                     if (other && other.id !== e.id) fail(409, 'entity.slug_taken', `/e/${s} is taken`);
-                    redirects.recordMove(e.id, `/e/${e.slug}`, `/e/${s}`, { reason: 'renamed' });
+                    await redirects.recordMove(e.id, `/e/${e.slug}`, `/e/${s}`, { reason: 'renamed' });
                     next.slug = s; changes.slug = [e.slug, s];
                 }
-                db.prepare('UPDATE review_entities SET name = ?, kind = ?, description = ?, slug = ?, noindex = ?, updated_at = ? WHERE id = ?')
+                await db.prepare('UPDATE review_entities SET name = ?, kind = ?, description = ?, slug = ?, noindex = ?, updated_at = ? WHERE id = ?')
                     .run(next.name, next.kind, next.description, next.slug, next.noindex, now(), e.id);
-                if (Object.keys(changes).length) audit(actor, 'entity.updated', e.id, null, changes);
-                syncEntity(e.id);
-                return q.entity.get(e.id);
+                if (Object.keys(changes).length) await audit(actor, 'entity.updated', e.id, null, changes);
+                await syncEntity(e.id);
+                return await q.entity.get(e.id);
             });
         },
 
-        deleteEntity(ref, { note = null } = {}, actor) {
+        async deleteEntity(ref, { note = null } = {}, actor) {
             requireEditorPerson(actor, 'Deleting an entity');
-            return tx(() => {
-                const e = entityOrFail(ref);
+            return await tx(async () => {
+                const e = await entityOrFail(ref);
                 if (e.state !== 'active') fail(409, 'entity.not_active', `This entity is ${e.state}`);
-                if (q.mergedInto.all(e.id).length) fail(409, 'entity.has_merges', 'Split the entities merged into this one first');
-                const active = q.activeSignalsOfEntity.all(e.id);
+                if ((await q.mergedInto.all(e.id)).length) fail(409, 'entity.has_merges', 'Split the entities merged into this one first');
+                const active = await q.activeSignalsOfEntity.all(e.id);
                 if (active.length) fail(409, 'entity.has_signals', 'This entity has live signals: reattribute or ignore their items first');
-                db.prepare("UPDATE review_entities SET state = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ?").run(now(), now(), e.id);
-                audit(actor, 'entity.deleted', e.id, null, { note });
-                syncEntity(e.id);
-                return q.entity.get(e.id);
+                await db.prepare("UPDATE review_entities SET state = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ?").run(now(), now(), e.id);
+                await audit(actor, 'entity.deleted', e.id, null, { note });
+                await syncEntity(e.id);
+                return await q.entity.get(e.id);
             });
         },
 
-        addAlias(ref, { type, value } = {}, actor) {
+        async addAlias(ref, { type, value } = {}, actor) {
             requireEditorPerson(actor, 'Adding an alias');
-            return tx(() => {
-                const e = entityOrFail(ref);
+            return await tx(async () => {
+                const e = await entityOrFail(ref);
                 if (e.state === 'deleted') fail(409, 'entity.not_active', 'This entity was deleted');
-                const a = insertAlias(e.id, type, value, actor);
-                audit(actor, 'alias.added', e.id, a.id, { type: a.type, value: a.value });
-                const settled = reresolvePending(actor);
+                const a = await insertAlias(e.id, type, value, actor);
+                await audit(actor, 'alias.added', e.id, a.id, { type: a.type, value: a.value });
+                const settled = await reresolvePending(actor);
                 return { alias: a, settled_items: settled };
             });
         },
 
-        removeAlias(ref, aliasId, actor) {
+        async removeAlias(ref, aliasId, actor) {
             requireEditorPerson(actor, 'Removing an alias');
-            return tx(() => {
-                const e = entityOrFail(ref);
-                const a = q.alias.get(String(aliasId));
+            return await tx(async () => {
+                const e = await entityOrFail(ref);
+                const a = await q.alias.get(String(aliasId));
                 if (!a || a.entity_id !== e.id || a.removed_at) fail(404, 'alias.not_found', 'No such alias');
-                q.removeAlias.run(now(), actorId(actor), a.id);
-                audit(actor, 'alias.removed', e.id, a.id, { type: a.type, value: a.value });
-                return q.alias.get(a.id);
+                await q.removeAlias.run(now(), actorId(actor), a.id);
+                await audit(actor, 'alias.removed', e.id, a.id, { type: a.type, value: a.value });
+                return await q.alias.get(a.id);
             });
         },
 
-        addLink(ref, { type, to = null, ref: entityRef = null, note = null } = {}, actor) {
+        async addLink(ref, { type, to = null, ref: entityRef = null, note = null } = {}, actor) {
             requireEditorPerson(actor, 'Linking entities');
             if (!LINK_TYPES.includes(type) || type === 'merged_into') fail(422, 'link.invalid', `type is one of ${LINK_TYPES.filter((t) => t !== 'merged_into').join(', ')} (merges go through merge)`);
-            return tx(() => {
-                const e = entityOrFail(ref);
+            return await tx(async () => {
+                const e = await entityOrFail(ref);
                 let target = null;
                 let refJson = null;
                 if (type === 'external_ref') {
                     const { entityRef: mk } = require('openvibe-publishing/discussion');
                     try { refJson = JSON.stringify(mk(entityRef || {})); } catch (err) { fail(422, 'link.invalid', err.message); }
                 } else {
-                    target = entityOrFail(to);
+                    target = await entityOrFail(to);
                     if (target.id === e.id) fail(422, 'link.invalid', 'An entity cannot link to itself');
                 }
                 const t = now();
                 const id = `lnk_${ulid(t)}`;
-                q.insertLink.run({ id, from: e.id, to: target ? target.id : null, type, ref: refJson, note: note ? String(note).slice(0, 500) : null, by: actorId(actor), now: t });
-                audit(actor, 'link.added', e.id, id, { type, to: target ? target.id : null, ref: parse(refJson, null) });
-                return q.link.get(id);
+                await q.insertLink.run({ id, from: e.id, to: target ? target.id : null, type, ref: refJson, note: note ? String(note).slice(0, 500) : null, by: actorId(actor), now: t });
+                await audit(actor, 'link.added', e.id, id, { type, to: target ? target.id : null, ref: parse(refJson, null) });
+                return await q.link.get(id);
             });
         },
 
-        endLink(ref, linkId, { note = null } = {}, actor) {
+        async endLink(ref, linkId, { note = null } = {}, actor) {
             requireEditorPerson(actor, 'Removing a link');
-            return tx(() => {
-                const e = entityOrFail(ref);
-                const l = q.link.get(String(linkId));
+            return await tx(async () => {
+                const e = await entityOrFail(ref);
+                const l = await q.link.get(String(linkId));
                 if (!l || (l.from_entity !== e.id && l.to_entity !== e.id) || l.ended_at || l.type === 'merged_into') fail(404, 'link.not_found', 'No such link (merges are undone with split)');
-                q.endLink.run(now(), actorId(actor), note ? String(note).slice(0, 500) : null, l.id);
-                audit(actor, 'link.ended', e.id, l.id, { type: l.type });
-                return q.link.get(l.id);
+                await q.endLink.run(now(), actorId(actor), note ? String(note).slice(0, 500) : null, l.id);
+                await audit(actor, 'link.ended', e.id, l.id, { type: l.type });
+                return await q.link.get(l.id);
             });
         },
 
@@ -1210,65 +1210,65 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
          * link, and the target's aggregate is recomputed over both. That is why a split restores
          * the pre-merge attribution exactly.
          */
-        merge(ref, { into, note = null } = {}, actor) {
+        async merge(ref, { into, note = null } = {}, actor) {
             const who = requireEditorPerson(actor, 'Merging entities');
-            return tx(() => {
-                const src = entityOrFail(ref);
-                const tgt = entityOrFail(into);
+            return await tx(async () => {
+                const src = await entityOrFail(ref);
+                const tgt = await entityOrFail(into);
                 if (src.id === tgt.id) fail(422, 'merge.same_entity', 'An entity cannot be merged into itself');
                 if (src.state !== 'active') fail(409, 'merge.not_active', `"${src.name}" is ${src.state}`);
-                if (tgt.state !== 'active') fail(409, 'merge.target_not_active', `"${tgt.name}" is ${tgt.state}${tgt.state === 'merged' ? `; merge into ${canonicalOf(tgt.id)} instead` : ''}`, { canonical_id: canonicalOf(tgt.id) });
-                if (closure(src.id).has(tgt.id)) fail(409, 'merge.cycle', 'The target is merged into this entity');
+                if (tgt.state !== 'active') fail(409, 'merge.target_not_active', `"${tgt.name}" is ${tgt.state}${tgt.state === 'merged' ? `; merge into ${await canonicalOf(tgt.id)} instead` : ''}`, { canonical_id: await canonicalOf(tgt.id) });
+                if ((await closure(src.id)).has(tgt.id)) fail(409, 'merge.cycle', 'The target is merged into this entity');
                 const t = now();
                 const linkId = `lnk_${ulid(t)}`;
-                const moved = activeSignalsIn(closure(src.id)).map((s) => s.id);
-                q.insertLink.run({ id: linkId, from: src.id, to: tgt.id, type: 'merged_into', ref: null, note: note ? String(note).slice(0, 500) : null, by: who, now: t });
-                db.prepare("UPDATE review_entities SET state = 'merged', merged_into = ?, updated_at = ? WHERE id = ?").run(tgt.id, t, src.id);
-                audit(actor, 'entity.merged', src.id, tgt.id, {
+                const moved = (await activeSignalsIn(await closure(src.id))).map((s) => s.id);
+                await q.insertLink.run({ id: linkId, from: src.id, to: tgt.id, type: 'merged_into', ref: null, note: note ? String(note).slice(0, 500) : null, by: who, now: t });
+                await db.prepare("UPDATE review_entities SET state = 'merged', merged_into = ?, updated_at = ? WHERE id = ?").run(tgt.id, t, src.id);
+                await audit(actor, 'entity.merged', src.id, tgt.id, {
                     link_id: linkId, into: tgt.id, note, signals: moved,
-                    aliases: q.aliasesOf.all(src.id).map((a) => a.id),
-                    merged_members: [...closure(src.id)].filter((id) => id !== src.id),
+                    aliases: (await q.aliasesOf.all(src.id)).map((a) => a.id),
+                    merged_members: [...await closure(src.id)].filter((id) => id !== src.id),
                 });
-                refreshAggregate(tgt.id, 'merge');
-                touchEntity(tgt.id);
-                syncEntity(src.id);
-                syncEntity(tgt.id);
-                entityEvent('reviews.entity.merged', src, actor, {
+                await refreshAggregate(tgt.id, 'merge');
+                await touchEntity(tgt.id);
+                await syncEntity(src.id);
+                await syncEntity(tgt.id);
+                await entityEvent('reviews.entity.merged', src, actor, {
                     entity_id: src.id, into_entity_id: tgt.id, link_id: linkId, signal_count: moved.length,
                     url: entityUrl(src), into_url: entityUrl(tgt), note: note ? String(note).slice(0, 500) : null,
                 });
-                return { link: q.link.get(linkId), entity: q.entity.get(src.id), into: q.entity.get(tgt.id), signals: moved };
+                return { link: await q.link.get(linkId), entity: await q.entity.get(src.id), into: await q.entity.get(tgt.id), signals: moved };
             });
         },
 
-        split(ref, { note = null } = {}, actor) {
+        async split(ref, { note = null } = {}, actor) {
             const who = requireEditorPerson(actor, 'Splitting entities');
-            return tx(() => {
-                const src = entityOrFail(ref);
+            return await tx(async () => {
+                const src = await entityOrFail(ref);
                 if (src.state !== 'merged') fail(409, 'split.not_merged', `"${src.name}" is not merged into another entity`);
-                const link = q.activeMerge.get(src.id);
+                const link = await q.activeMerge.get(src.id);
                 if (!link) fail(409, 'split.no_merge_link', 'No active merge link for this entity');
                 const t = now();
-                q.endLink.run(t, who, note ? String(note).slice(0, 500) : null, link.id);
-                db.prepare("UPDATE review_entities SET state = 'active', merged_into = NULL, updated_at = ? WHERE id = ?").run(t, src.id);
-                const restored = activeSignalsIn(closure(src.id)).map((s) => s.id);
-                audit(actor, 'entity.split', src.id, link.to_entity, { link_id: link.id, from: link.to_entity, note, signals: restored });
-                refreshAggregate(src.id, 'split');
-                refreshAggregate(link.to_entity, 'split');
+                await q.endLink.run(t, who, note ? String(note).slice(0, 500) : null, link.id);
+                await db.prepare("UPDATE review_entities SET state = 'active', merged_into = NULL, updated_at = ? WHERE id = ?").run(t, src.id);
+                const restored = (await activeSignalsIn(await closure(src.id))).map((s) => s.id);
+                await audit(actor, 'entity.split', src.id, link.to_entity, { link_id: link.id, from: link.to_entity, note, signals: restored });
+                await refreshAggregate(src.id, 'split');
+                await refreshAggregate(link.to_entity, 'split');
                 // The former target's summary may cite signals that went back with the split.
-                const tgtCanon = canonicalOf(link.to_entity);
-                const tgtSummary = tgtCanon && q.summary.get(tgtCanon);
-                if (tgtSummary) flagSummary(tgtSummary.id, 'Entities were split: a cited signal now belongs to another entity', restored);
-                touchEntity(src.id);
-                if (tgtCanon) touchEntity(tgtCanon);
-                syncEntity(src.id);
-                if (tgtCanon) syncEntity(tgtCanon);
-                const from = q.entity.get(link.to_entity);
-                entityEvent('reviews.entity.split', src, actor, {
+                const tgtCanon = await canonicalOf(link.to_entity);
+                const tgtSummary = tgtCanon && await q.summary.get(tgtCanon);
+                if (tgtSummary) await flagSummary(tgtSummary.id, 'Entities were split: a cited signal now belongs to another entity', restored);
+                await touchEntity(src.id);
+                if (tgtCanon) await touchEntity(tgtCanon);
+                await syncEntity(src.id);
+                if (tgtCanon) await syncEntity(tgtCanon);
+                const from = await q.entity.get(link.to_entity);
+                await entityEvent('reviews.entity.split', src, actor, {
                     entity_id: src.id, from_entity_id: link.to_entity, link_id: link.id, signal_count: restored.length,
-                    url: entityUrl(q.entity.get(src.id)), from_url: from ? entityUrl(from) : null, note: note ? String(note).slice(0, 500) : null,
+                    url: entityUrl(await q.entity.get(src.id)), from_url: from ? entityUrl(from) : null, note: note ? String(note).slice(0, 500) : null,
                 });
-                return { link: q.link.get(link.id), entity: q.entity.get(src.id), from: from, signals: restored };
+                return { link: await q.link.get(link.id), entity: await q.entity.get(src.id), from: from, signals: restored };
             });
         },
 
@@ -1280,26 +1280,26 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         async importItem(itemId, sources, actor) {
             const { item, source } = await sources.getItem(String(itemId || ''));
             let info = source || null;
-            if (!q.source.get(item.source_key)) {
+            if (!await q.source.get(item.source_key)) {
                 try { const full = await sources.getSource(item.source_key); if (full) info = { ...full, ...(source || {}) }; } catch { /* the notes come with the item */ }
             }
-            return applyItem(item, { sourceInfo: info, actor });
+            return await applyItem(item, { sourceInfo: info, actor });
         },
 
         /** A source item removal we heard about (sources.item.removed event). */
-        removeItem(itemId, reason, actor) {
-            const row = q.item.get(String(itemId));
+        async removeItem(itemId, reason, actor) {
+            const row = await q.item.get(String(itemId));
             if (!row) return { outcome: 'ignored:unknown_item' };
             if (row.state === 'removed') return { outcome: 'unchanged' };
-            return tx(() => {
-                q.removeItem.run(new Date(now()).toISOString(), String(reason || 'removed by its source').slice(0, 500), now(), row.id);
-                reconcileItemSignal(q.item.get(row.id), actor);
-                return { outcome: 'removed', item: q.item.get(row.id) };
+            return await tx(async () => {
+                await q.removeItem.run(new Date(now()).toISOString(), String(reason || 'removed by its source').slice(0, 500), now(), row.id);
+                await reconcileItemSignal(await q.item.get(row.id), actor);
+                return { outcome: 'removed', item: await q.item.get(row.id) };
             });
         },
 
-        item(itemId) { return q.item.get(String(itemId)) || null; },
-        itemView(row) {
+        async item(itemId) { return await q.item.get(String(itemId)) || null; },
+        async itemView(row) {
             if (!row) return null;
             const fields = parse(row.fields, {});
             return {
@@ -1307,50 +1307,50 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                 item_revision: row.item_revision, published_at: row.published_at, retrieved_at: row.retrieved_at, license_note: row.license_note, terms_note: row.terms_note,
                 fields, state: row.state, removed_at: row.removed_at, removed_reason: row.removed_reason,
                 resolution: row.resolution, entity_id: row.entity_id, resolution_rule: row.resolution_rule,
-                candidates: parse(row.candidates, []).map((c) => ({ ...c, entity: q.entity.get(c.entity_id) ? entityView(q.entity.get(c.entity_id)) : null })),
-                signal_note: row.signal_note, signal: (() => { const s = q.activeSignalOfItem.get(row.id); return s ? signalPayload(s) : null; })(),
+                candidates: (await Promise.all(parse(row.candidates, []).map(async (c) => ({ ...c, entity: await q.entity.get(c.entity_id) ? await entityView(await q.entity.get(c.entity_id)) : null })))),
+                signal_note: row.signal_note, signal: (async () => { const s = await q.activeSignalOfItem.get(row.id); return s ? await signalPayload(s) : null; })(),
             };
         },
-        resolutionQueue(limit = 200) { return q.queueItems.all(Math.min(500, limit)); },
+        async resolutionQueue(limit = 200) { return await q.queueItems.all(Math.min(500, limit)); },
 
         /** An editor settles an item: attach it to an entity (optionally remember the identifier). */
-        confirmResolution(itemId, { entity: entityRef, add_alias: addAlias = null } = {}, actor) {
+        async confirmResolution(itemId, { entity: entityRef, add_alias: addAlias = null } = {}, actor) {
             const who = requireEditorPerson(actor, 'Confirming a resolution');
-            return tx(() => {
-                const row = q.item.get(String(itemId));
+            return await tx(async () => {
+                const row = await q.item.get(String(itemId));
                 if (!row) fail(404, 'item.not_found', 'Reviews has not read that item');
                 if (row.state !== 'active') fail(409, 'item.removed', 'Its source removed this item');
-                const e = entityOrFail(entityRef);
+                const e = await entityOrFail(entityRef);
                 if (e.state !== 'active') fail(409, 'entity.not_active', `"${e.name}" is ${e.state}`);
                 const before = { resolution: row.resolution, entity_id: row.entity_id };
                 if (addAlias) {
                     const ids = itemIdentifiers(row);
                     const pick = addAlias === 'name' ? (ids.names[0] ? { type: 'name', value: ids.names[0] } : null) : ids.strong.find((x) => x.type === addAlias);
                     if (!pick) fail(422, 'alias.invalid', `The item has no ${addAlias} to remember`);
-                    insertAlias(e.id, pick.type, pick.value, actor);
+                    await insertAlias(e.id, pick.type, pick.value, actor);
                 }
-                const fresh = setItemResolution(row, { resolution: 'resolved', entity_id: e.id, rule: 'editor', candidates: [] }, who);
-                const out = reconcileItemSignal(fresh, actor);
-                audit(actor, 'item.resolved', e.id, row.id, { before, rule: 'editor', add_alias: addAlias || null, signal: out.signal ? out.signal.id : null });
-                const settled = addAlias ? reresolvePending(actor) : 0;
-                return { item: q.item.get(row.id), signal: out.signal || null, settled_items: settled };
+                const fresh = await setItemResolution(row, { resolution: 'resolved', entity_id: e.id, rule: 'editor', candidates: [] }, who);
+                const out = await reconcileItemSignal(fresh, actor);
+                await audit(actor, 'item.resolved', e.id, row.id, { before, rule: 'editor', add_alias: addAlias || null, signal: out.signal ? out.signal.id : null });
+                const settled = addAlias ? await reresolvePending(actor) : 0;
+                return { item: await q.item.get(row.id), signal: out.signal || null, settled_items: settled };
             });
         },
 
-        ignoreItem(itemId, { note = null } = {}, actor) {
+        async ignoreItem(itemId, { note = null } = {}, actor) {
             requireEditorPerson(actor, 'Ignoring an item');
-            return tx(() => {
-                const row = q.item.get(String(itemId));
+            return await tx(async () => {
+                const row = await q.item.get(String(itemId));
                 if (!row) fail(404, 'item.not_found', 'Reviews has not read that item');
-                const fresh = setItemResolution(row, { resolution: 'ignored', entity_id: null, rule: 'editor', candidates: [] }, actorId(actor));
-                reconcileItemSignal(fresh, actor);
-                audit(actor, 'item.ignored', row.entity_id, row.id, { note });
-                return q.item.get(row.id);
+                const fresh = await setItemResolution(row, { resolution: 'ignored', entity_id: null, rule: 'editor', candidates: [] }, actorId(actor));
+                await reconcileItemSignal(fresh, actor);
+                await audit(actor, 'item.ignored', row.entity_id, row.id, { note });
+                return await q.item.get(row.id);
             });
         },
 
         // Trust metadata --------------------------------------------------------------------
-        setTrust({ scope, scope_id: scopeId, key, value, note = null } = {}, actor) {
+        async setTrust({ scope, scope_id: scopeId, key, value, note = null } = {}, actor) {
             requireEditorPerson(actor, 'Trust decisions');
             if (!['source', 'signal', 'entity'].includes(scope)) fail(422, 'trust.invalid', 'scope is source, signal or entity');
             if (!TRUST_KEYS.includes(key)) fail(422, 'trust.invalid', `key is one of ${TRUST_KEYS.join(', ')}`);
@@ -1358,22 +1358,22 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             if (key === 'aggregate' && !['include', 'exclude'].includes(v)) fail(422, 'trust.invalid', 'aggregate is include or exclude');
             if (key === 'aggregate' && v === 'exclude' && !String(note || '').trim()) fail(422, 'trust.reason_required', 'Excluding from the aggregate needs a reason readers can see');
             if (key === 'aggregate' && scope === 'entity') fail(422, 'trust.invalid', 'Exclude a source or a signal, not a whole entity');
-            return tx(() => {
+            return await tx(async () => {
                 let entityIds = [];
-                if (scope === 'source') { if (!q.source.get(String(scopeId))) fail(404, 'source.not_found', 'Reviews has not seen that source'); entityIds = q.entitiesWithSourceSignals.all(String(scopeId)).map((r) => r.entity_id); }
-                if (scope === 'signal') { const s = q.signal.get(String(scopeId)); if (!s) fail(404, 'signal.not_found', 'No such signal'); entityIds = [s.entity_id]; }
-                if (scope === 'entity') { const e = entityOrFail(scopeId); scopeId = e.id; entityIds = [e.id]; }
-                const cur = q.trustOne.get(scope, String(scopeId), key);
+                if (scope === 'source') { if (!await q.source.get(String(scopeId))) fail(404, 'source.not_found', 'Reviews has not seen that source'); entityIds = (await q.entitiesWithSourceSignals.all(String(scopeId))).map((r) => r.entity_id); }
+                if (scope === 'signal') { const s = await q.signal.get(String(scopeId)); if (!s) fail(404, 'signal.not_found', 'No such signal'); entityIds = [s.entity_id]; }
+                if (scope === 'entity') { const e = await entityOrFail(scopeId); scopeId = e.id; entityIds = [e.id]; }
+                const cur = await q.trustOne.get(scope, String(scopeId), key);
                 const who = actorId(actor);
-                if (cur) q.trustEnd.run(now(), who, cur.id);
-                if (v && !(key === 'aggregate' && v === 'include')) q.trustInsert.run(scope, String(scopeId), key, v, note ? String(note).slice(0, 1000) : null, who, now());
-                audit(actor, 'trust.set', scope === 'entity' ? scopeId : (entityIds.length === 1 ? canonicalOf(entityIds[0]) : null), `${scope}:${scopeId}`, { key, value: v, note, previous: cur ? { value: cur.value, note: cur.note } : null });
-                const canon = [...new Set(entityIds.map(canonicalOf).filter(Boolean))];
-                for (const id of canon) { refreshAggregate(id, 'trust'); touchEntity(id); syncEntity(id); }
-                return { scope, scope_id: scopeId, key, current: q.trustOne.get(scope, String(scopeId), key) || null, affected_entities: canon };
+                if (cur) await q.trustEnd.run(now(), who, cur.id);
+                if (v && !(key === 'aggregate' && v === 'include')) await q.trustInsert.run(scope, String(scopeId), key, v, note ? String(note).slice(0, 1000) : null, who, now());
+                await audit(actor, 'trust.set', scope === 'entity' ? scopeId : (entityIds.length === 1 ? await canonicalOf(entityIds[0]) : null), `${scope}:${scopeId}`, { key, value: v, note, previous: cur ? { value: cur.value, note: cur.note } : null });
+                const canon = [...new Set((await Promise.all(entityIds.map(canonicalOf))).filter(Boolean))];
+                for (const id of canon) { await refreshAggregate(id, 'trust'); await touchEntity(id); await syncEntity(id); }
+                return { scope, scope_id: scopeId, key, current: await q.trustOne.get(scope, String(scopeId), key) || null, affected_entities: canon };
             });
         },
-        trustHistory(scope, id) { return q.trustHistory.all(scope, id); },
+        async trustHistory(scope, id) { return await q.trustHistory.all(scope, id); },
         trustMap,
 
         // Summaries (reviews.summary.publish | reviews.summary.propose) ----------------------
@@ -1382,24 +1382,24 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
          * correction_note (and optionally the correction_id of a reader's request it answers) the
          * revision corrects the published summary: it carries the note and is published at once.
          */
-        writeSummary(ref, input = {}, actor) {
+        async writeSummary(ref, input = {}, actor) {
             const who = requireEditorPerson(actor, 'Writing a summary');
-            return tx(() => {
-                const e = entityOrFail(ref);
+            return await tx(async () => {
+                const e = await entityOrFail(ref);
                 if (e.state !== 'active') fail(409, 'entity.not_active', `This entity is ${e.state}`);
-                if (wantsCorrection(input)) return correctSummary(e, input, { note: input.correction_note, requestId: input.correction_id }, actor, who);
-                const body = checkSummaryInput(e.id, input);
-                const summary = ensureSummary(e.id);
-                const revision = createRevision({
-                    entityId: summary.id, expectedRevision: expectedOf(input, revisions.headNumber(summary.id)), content: body.content, fields: body.fields,
+                if (wantsCorrection(input)) return await correctSummary(e, input, { note: input.correction_note, requestId: input.correction_id }, actor, who);
+                const body = await checkSummaryInput(e.id, input);
+                const summary = await ensureSummary(e.id);
+                const revision = await createRevision({
+                    entityId: summary.id, expectedRevision: expectedOf(input, await revisions.headNumber(summary.id)), content: body.content, fields: body.fields,
                     meta: { authorship: authorship.record({ mode: 'human', authors: [who] }) }, author: who,
                     message: input.message ? String(input.message).slice(0, 500) : null, allowUnchanged: true,
                 });
-                writeCitations(summary, revision);
-                audit(actor, 'summary.revision', e.id, summary.id, { revision: revision.number });
+                await writeCitations(summary, revision);
+                await audit(actor, 'summary.revision', e.id, summary.id, { revision: revision.number });
                 let published = null;
-                if (input.publish === true || input.publish === 'true' || input.publish === '1') published = svc.publishSummary(e.id, { revision: revision.number }, actor);
-                return { summary: q.summary.get(e.id), revision: summaryRevisionView(q.summary.get(e.id), revision, e.id), published: !!published };
+                if (input.publish === true || input.publish === 'true' || input.publish === '1') published = await svc.publishSummary(e.id, { revision: revision.number }, actor);
+                return { summary: await q.summary.get(e.id), revision: await summaryRevisionView(await q.summary.get(e.id), revision, e.id), published: !!published };
             });
         },
 
@@ -1409,138 +1409,138 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
          * approves it, and it can never state a rating: its text is checked, and summaries have no
          * field that could carry one.
          */
-        proposeSummary(ref, input = {}, actor) {
+        async proposeSummary(ref, input = {}, actor) {
             if (!actor || (actor.kind !== 'service' && actor.kind !== 'system')) fail(403, 'summary.service_only', 'AI proposals come from a service principal');
             const wf = input.workflow || {};
             const runId = wf.run_id || wf.runId;
             if (!wf.id || !runId) fail(400, 'authorship.workflow_required', `An AI proposal names its OpenVibe.AI workflow (workflow.id, e.g. ${SUMMARY_WORKFLOW}) and run (workflow.run_id)`);
             let rec;
             try { rec = authorship.record({ mode: 'ai', workflow: { id: String(wf.id), runId: String(runId), version: wf.version, model: wf.model }, stubProvider: !!(input.stub_provider || input.stubProvider) }); } catch (err) { fail(422, 'authorship.invalid', err.message); }
-            return tx(() => {
-                const e = entityOrFail(ref);
+            return await tx(async () => {
+                const e = await entityOrFail(ref);
                 if (e.state !== 'active') fail(409, 'entity.not_active', `This entity is ${e.state}`);
-                const body = checkSummaryInput(e.id, input, { ai: true });
-                const summary = ensureSummary(e.id);
-                const head = revisions.headNumber(summary.id);
-                const { revision } = revisions.create({
+                const body = await checkSummaryInput(e.id, input, { ai: true });
+                const summary = await ensureSummary(e.id);
+                const head = await revisions.headNumber(summary.id);
+                const { revision } = await revisions.create({
                     entityId: summary.id, expectedRevision: head, content: body.content, fields: body.fields,
                     meta: { authorship: rec }, author: actorId(actor), message: input.note ? `AI proposal: ${String(input.note).slice(0, 200)}` : 'AI proposal', allowUnchanged: true,
                 });
-                writeCitations(summary, revision);
-                audit(actor, 'summary.proposed', e.id, summary.id, { revision: revision.number, workflow: rec.workflow, stub_provider: !!rec.stubProvider });
-                return { summary: q.summary.get(e.id), revision: summaryRevisionView(q.summary.get(e.id), revision, e.id) };
+                await writeCitations(summary, revision);
+                await audit(actor, 'summary.proposed', e.id, summary.id, { revision: revision.number, workflow: rec.workflow, stub_provider: !!rec.stubProvider });
+                return { summary: await q.summary.get(e.id), revision: await summaryRevisionView(await q.summary.get(e.id), revision, e.id) };
             });
         },
 
         /** An editor approves (and by default publishes) or rejects a revision. */
-        reviewSummary(ref, n, { decision, note = null, publish = true } = {}, actor) {
+        async reviewSummary(ref, n, { decision, note = null, publish = true } = {}, actor) {
             const who = requireEditorPerson(actor, 'Reviewing a summary');
             if (decision !== 'approved' && decision !== 'rejected') fail(422, 'review.invalid_decision', 'decision is approved or rejected');
-            return tx(() => {
-                const e = entityOrFail(ref);
-                const summary = q.summary.get(e.id);
+            return await tx(async () => {
+                const e = await entityOrFail(ref);
+                const summary = await q.summary.get(e.id);
                 if (!summary) fail(404, 'summary.not_found', 'This entity has no summary');
-                const rev = revisions.get(summary.id, Number(n));
+                const rev = await revisions.get(summary.id, Number(n));
                 if (!rev) fail(404, 'revision.not_found', `No revision ${n}`);
-                const review = reviews.record({ entityId: summary.id, revision: rev.number, reviewer: who, decision, note });
-                audit(actor, `summary.${decision}`, e.id, summary.id, { revision: rev.number, note });
+                const review = await reviews.record({ entityId: summary.id, revision: rev.number, reviewer: who, decision, note });
+                await audit(actor, `summary.${decision}`, e.id, summary.id, { revision: rev.number, note });
                 let published = false;
-                if (decision === 'approved' && publish !== false && publish !== 'false') { svc.publishSummary(e.id, { revision: rev.number }, actor); published = true; }
-                if (decision === 'approved' && !published && summary.state === 'published' && summary.published_revision === rev.number) syncEntity(e.id);
-                return { review, published, summary: q.summary.get(e.id) };
+                if (decision === 'approved' && publish !== false && publish !== 'false') { await svc.publishSummary(e.id, { revision: rev.number }, actor); published = true; }
+                if (decision === 'approved' && !published && summary.state === 'published' && summary.published_revision === rev.number) await syncEntity(e.id);
+                return { review, published, summary: await q.summary.get(e.id) };
             });
         },
 
-        publishSummary(ref, { revision } = {}, actor) {
+        async publishSummary(ref, { revision } = {}, actor) {
             requireEditorPerson(actor, 'Publishing a summary');
-            return tx(() => {
-                const e = entityOrFail(ref);
+            return await tx(async () => {
+                const e = await entityOrFail(ref);
                 if (e.state !== 'active') fail(409, 'entity.not_active', `This entity is ${e.state}`);
-                const summary = q.summary.get(e.id);
+                const summary = await q.summary.get(e.id);
                 if (!summary) fail(404, 'summary.not_found', 'This entity has no summary');
-                const n = revision == null ? revisions.headNumber(summary.id) : Number(revision);
-                const rev = revisions.get(summary.id, n);
+                const n = revision == null ? await revisions.headNumber(summary.id) : Number(revision);
+                const rev = await revisions.get(summary.id, n);
                 if (!rev) fail(404, 'revision.not_found', `No revision ${revision}`);
-                const review = reviews.latest(summary.id, n);
+                const review = await reviews.latest(summary.id, n);
                 if (review && review.decision === 'rejected') fail(409, 'summary.rejected', 'This revision was rejected by an editor');
                 const rec = rev.meta && rev.meta.authorship;
                 if (rec) { const ok = authorship.canPublish(rec, review); if (!ok.ok) fail(409, ok.reason, 'AI-drafted summaries are published only after a person approves them'); }
                 if (rev.meta && rev.meta.system && !(review && review.decision === 'approved')) fail(409, 'summary.review_required', 'A revision prepared after a source change is published only after an editor approves it');
-                const bad = citationState(e.id, rev).filter((p) => !p.supported);
+                const bad = (await citationState(e.id, rev)).filter((p) => !p.supported);
                 if (bad.length) fail(409, 'summary.unsupported_points', `${bad.length} point(s) cite no live signal of this entity`, { points: bad.map((p) => p.key) });
                 const wasPublished = summary.state === 'published';
                 const before = summary.published_revision;
-                q.publishSummary.run({ id: summary.id, n, now: now() });
-                audit(actor, 'summary.published', e.id, summary.id, { revision: n, previous: before });
-                touchEntity(e.id);
-                const doc = syncEntity(e.id);
-                const fresh = q.entity.get(e.id);
-                const decision = decide(fresh);
+                await q.publishSummary.run({ id: summary.id, n, now: now() });
+                await audit(actor, 'summary.published', e.id, summary.id, { revision: n, previous: before });
+                await touchEntity(e.id);
+                const doc = await syncEntity(e.id);
+                const fresh = await q.entity.get(e.id);
+                const decision = await decide(fresh);
                 const action = !wasPublished ? 'published' : (before !== n ? 'updated' : null);
                 if (action) {
-                    emit(hooks.publicationEvent({
+                    await emit(hooks.publicationEvent({
                         product: 'reviews', type: 'summary', action, id: summary.id, revision: n,
                         actor: hooks.subjectRef(actorId(actor)), decision, now: now(),
                         document: { owner: 'reviews', type: 'summary', id: summary.id, revision: doc ? doc.revision : 0, deleted: false, visibility: 'public', canonical_url: entityUrl(fresh), publication_state: 'published', indexability: hooks.searchIndexability(decision) },
                         extra: { entity_id: e.id, entity_slug: fresh.slug, authorship: rec ? hooks.AUTHORSHIP[rec.mode] : null, ...(rev.meta && rev.meta.correction ? { correction: { note: rev.meta.correction.note, corrects: rev.meta.correction.corrects } } : {}) },
                     }));
                 }
-                return q.summary.get(e.id);
+                return await q.summary.get(e.id);
             });
         },
 
-        unpublishSummary(ref, actor) {
+        async unpublishSummary(ref, actor) {
             requireEditorPerson(actor, 'Unpublishing a summary');
-            return tx(() => {
-                const e = entityOrFail(ref);
-                const summary = q.summary.get(e.id);
+            return await tx(async () => {
+                const e = await entityOrFail(ref);
+                const summary = await q.summary.get(e.id);
                 if (!summary || summary.state !== 'published') fail(409, 'summary.not_published', 'Nothing is published');
-                q.unpublishSummary.run(now(), summary.id);
-                audit(actor, 'summary.unpublished', e.id, summary.id, { revision: summary.published_revision });
-                const doc = syncEntity(e.id);
-                const fresh = q.entity.get(e.id);
-                emit(hooks.publicationEvent({
+                await q.unpublishSummary.run(now(), summary.id);
+                await audit(actor, 'summary.unpublished', e.id, summary.id, { revision: summary.published_revision });
+                const doc = await syncEntity(e.id);
+                const fresh = await q.entity.get(e.id);
+                await emit(hooks.publicationEvent({
                     product: 'reviews', type: 'summary', action: 'unpublished', id: summary.id, revision: summary.published_revision,
-                    actor: hooks.subjectRef(actorId(actor)), decision: decide(fresh), now: now(),
+                    actor: hooks.subjectRef(actorId(actor)), decision: await decide(fresh), now: now(),
                     document: { owner: 'reviews', type: 'summary', id: summary.id, revision: doc ? doc.revision : 0, deleted: true },
                     extra: { entity_id: e.id, entity_slug: fresh.slug },
                 }));
-                return q.summary.get(e.id);
+                return await q.summary.get(e.id);
             });
         },
 
-        flaggedSummaries() { return q.flaggedSummaries.all().map((s) => ({ ...s, entity: q.entity.get(s.entity_id) })); },
-        pendingSummaries() {
-            return q.allSummaries.all().map((s) => ({ summary: s, entity: q.entity.get(s.entity_id), pending: pendingRevisions(s) }))
+        async flaggedSummaries() { return (await Promise.all((await q.flaggedSummaries.all()).map(async (s) => ({ ...s, entity: await q.entity.get(s.entity_id) })))); },
+        async pendingSummaries() {
+            return (await Promise.all((await q.allSummaries.all()).map(async (s) => ({ summary: s, entity: await q.entity.get(s.entity_id), pending: await pendingRevisions(s) }))))
                 .filter((x) => x.pending.length && x.entity && x.entity.state === 'active')
                 .map((x) => ({ entity: x.entity, summary: x.summary, pending: x.pending.map((p) => ({ number: p.rev.number, status: p.status, message: p.rev.message, created_at: p.rev.createdAt })) }));
         },
 
         /** Published summaries for the feed, newest first, with the gate's decision for the entity. */
-        recentSummaries(limit = 50) {
-            return q.publishedSummaries.all(limit).map((s) => {
-                const e = q.entity.get(s.entity_id);
+        async recentSummaries(limit = 50) {
+            return (await Promise.all((await q.publishedSummaries.all(limit)).map(async (s) => {
+                const e = await q.entity.get(s.entity_id);
                 if (!e || e.state !== 'active') return null;
-                const rev = revisions.get(s.id, s.published_revision);
-                return { summary: s, entity: e, rev, decision: decide(e) };
-            }).filter(Boolean);
+                const rev = await revisions.get(s.id, s.published_revision);
+                return { summary: s, entity: e, rev, decision: await decide(e) };
+            }))).filter(Boolean);
         },
 
         /** Every active entity with its decision (sitemaps). */
-        publicEntities() {
-            return db.prepare("SELECT * FROM review_entities WHERE state = 'active' ORDER BY id").all().map((e) => ({ entity: e, decision: decide(e) }));
+        async publicEntities() {
+            return (await Promise.all((await db.prepare("SELECT * FROM review_entities WHERE state = 'active' ORDER BY id").all()).map(async (e) => ({ entity: e, decision: await decide(e) }))));
         },
 
         /** Entities with at least one live signal or a published summary (the home page). */
-        entitiesWithData(limit = 60) {
-            return db.prepare(`SELECT e.* FROM review_entities e WHERE e.state = 'active' AND (
+        async entitiesWithData(limit = 60) {
+            return (await Promise.all((await db.prepare(`SELECT e.* FROM review_entities e WHERE e.state = 'active' AND (
                     EXISTS (SELECT 1 FROM review_signals s JOIN review_entities m ON m.id = s.entity_id WHERE s.status = 'active' AND (m.id = e.id OR m.merged_into = e.id))
                     OR EXISTS (SELECT 1 FROM review_summaries u WHERE u.entity_id = e.id AND u.state = 'published'))
-                ORDER BY e.updated_at DESC LIMIT ?`).all(limit).map((e) => ({ entity: e, aggregate: aggregateView(q.lastAggregate.get(e.id)) }));
+                ORDER BY e.updated_at DESC LIMIT ?`).all(limit)).map(async (e) => ({ entity: e, aggregate: aggregateView(await q.lastAggregate.get(e.id)) }))));
         },
 
         // Corrections (reviews.correction.submit) --------------------------------------------
-        submitCorrection(ref, { target_type: targetType = 'entity', target_id: targetId = null, body, evidence_url: evidenceUrl = null } = {}, actor) {
+        async submitCorrection(ref, { target_type: targetType = 'entity', target_id: targetId = null, body, evidence_url: evidenceUrl = null } = {}, actor) {
             if (!access.isPerson(actor)) fail(403, 'reviews.person_required', 'Corrections come from a signed-in person (a service must name them in X-OV-Subject)');
             if (!['entity', 'alias', 'signal', 'summary', 'aggregate'].includes(targetType)) fail(422, 'correction.invalid', 'target_type is entity, alias, signal, summary or aggregate');
             const text = String(body == null ? '' : body).trim();
@@ -1550,62 +1550,62 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             if (evidenceUrl) {
                 try { const u = new URL(String(evidenceUrl)); if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('x'); url = u.toString(); } catch { fail(422, 'correction.invalid', 'evidence_url must be an http(s) URL'); }
             }
-            return tx(() => {
-                const e = entityOrFail(ref);
+            return await tx(async () => {
+                const e = await entityOrFail(ref);
                 if (e.state === 'deleted') fail(410, 'entity.deleted', 'This entity was deleted');
                 const t = now();
-                const entityId = canonicalOf(e.id) || e.id;
+                const entityId = await canonicalOf(e.id) || e.id;
                 // One person cannot bury the editors' queue: a daily allowance, and the same open request once.
-                if (q.sameOpenCorrection.get(actor.subject, entityId, text)) fail(409, 'correction.duplicate', 'You already sent this correction; it is waiting for an editor');
-                if (q.correctionsSince.get(actor.subject, t - DAY_MS).n >= CORRECTIONS_PER_PERSON_DAY) fail(429, 'correction.rate_limited', `At most ${CORRECTIONS_PER_PERSON_DAY} corrections a day; the editors will read the ones you sent`);
+                if (await q.sameOpenCorrection.get(actor.subject, entityId, text)) fail(409, 'correction.duplicate', 'You already sent this correction; it is waiting for an editor');
+                if ((await q.correctionsSince.get(actor.subject, t - DAY_MS)).n >= CORRECTIONS_PER_PERSON_DAY) fail(429, 'correction.rate_limited', `At most ${CORRECTIONS_PER_PERSON_DAY} corrections a day; the editors will read the ones you sent`);
                 const id = `cor_${ulid(t)}`;
                 const target = targetId ? String(targetId).slice(0, 100) : null;
-                q.insertCorrection.run({ id, entity_id: entityId, target_type: targetType, target_id: target, body: text, evidence_url: url ? url.slice(0, 2000) : null, submitted_by: actor.subject, via: actor.kind === 'service' ? actor.service : null, now: t });
-                audit(actor, 'correction.submitted', entityId, id, { target_type: targetType, target_id: target });
-                return q.correction.get(id);
+                await q.insertCorrection.run({ id, entity_id: entityId, target_type: targetType, target_id: target, body: text, evidence_url: url ? url.slice(0, 2000) : null, submitted_by: actor.subject, via: actor.kind === 'service' ? actor.service : null, now: t });
+                await audit(actor, 'correction.submitted', entityId, id, { target_type: targetType, target_id: target });
+                return await q.correction.get(id);
             });
         },
-        openCorrections() {
-            return q.openCorrections.all().map((c) => {
-                const entity = q.entity.get(canonicalOf(c.entity_id) || c.entity_id);
-                const s = entity && entity.state === 'active' ? q.summary.get(entity.id) : null;
+        async openCorrections() {
+            return (await Promise.all((await q.openCorrections.all()).map(async (c) => {
+                const entity = await q.entity.get(await canonicalOf(c.entity_id) || c.entity_id);
+                const s = entity && entity.state === 'active' ? await q.summary.get(entity.id) : null;
                 return { ...c, entity, summary_published: !!(s && s.state === 'published') };
-            });
+            })));
         },
-        correction(id) { return q.correction.get(String(id)) || null; },
+        async correction(id) { return await q.correction.get(String(id)) || null; },
         /**
          * An editor accepts or rejects a correction request. `note` stays with the editors. Accepting
          * a request about an entity whose summary is published corrects that summary: a new revision
          * with the public `correction_note` (and the new text in `summary`, or the published text
          * carried forward). Rejecting creates nothing.
          */
-        resolveCorrection(id, { status, note = null, correction_note: correctionNote = null, summary: body = null } = {}, actor) {
+        async resolveCorrection(id, { status, note = null, correction_note: correctionNote = null, summary: body = null } = {}, actor) {
             const who = requireEditorPerson(actor, 'Resolving a correction');
             if (!['accepted', 'rejected'].includes(status)) fail(422, 'correction.invalid', 'status is accepted or rejected');
             if (body != null && (typeof body !== 'object' || Array.isArray(body))) fail(422, 'summary.invalid', 'summary is { overview, overview_signals, pros, cons }');
-            return tx(() => {
-                const c = q.correction.get(String(id));
+            return await tx(async () => {
+                const c = await q.correction.get(String(id));
                 if (!c) fail(404, 'correction.not_found', 'No such correction');
                 if (c.status !== 'open') fail(409, 'correction.closed', `Already ${c.status}`);
                 const internal = note ? String(note).slice(0, 2000) : null;
                 if (status === 'accepted') {
-                    const e = q.entity.get(canonicalOf(c.entity_id) || c.entity_id);
-                    const s = e && e.state === 'active' ? q.summary.get(e.id) : null;
+                    const e = await q.entity.get(await canonicalOf(c.entity_id) || c.entity_id);
+                    const s = e && e.state === 'active' ? await q.summary.get(e.id) : null;
                     if (s && s.state === 'published') {
-                        const out = correctSummary(e, { ...(body || {}) }, { note: correctionNote, requestId: c.id, resolutionNote: internal }, actor, who);
+                        const out = await correctSummary(e, { ...(body || {}) }, { note: correctionNote, requestId: c.id, resolutionNote: internal }, actor, who);
                         return { correction: out.correction, revision: out.revision };
                     }
                 }
-                q.resolveCorrection.run(status, who, internal, now(), c.id);
-                audit(actor, `correction.${status}`, c.entity_id, c.id, { note: internal });
-                return { correction: q.correction.get(c.id), revision: null };
+                await q.resolveCorrection.run(status, who, internal, now(), c.id);
+                await audit(actor, `correction.${status}`, c.entity_id, c.id, { note: internal });
+                return { correction: await q.correction.get(c.id), revision: null };
             });
         },
 
         // Discussion (Community, referenced) -------------------------------------------------
-        knownThread(entityId) { const d = discussions.get(entityId); return d ? d.threadId : null; },
+        async knownThread(entityId) { const d = await discussions.get(entityId); return d ? d.threadId : null; },
         async discussionThread(e, client) {
-            const known = discussions.get(e.id);
+            const known = await discussions.get(e.id);
             if (known) return known.threadId;
             if (e.state !== 'active') return null;
             const out = await discussions.threadFor(e.id, { service: 'reviews', type: 'entity', id: e.id, label: e.name.slice(0, 200) }, { client });
@@ -1613,27 +1613,27 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         },
 
         // Search reconciliation ---------------------------------------------------------------
-        reconcileIndex() {
-            return tx(() => {
+        async reconcileIndex() {
+            return await tx(async () => {
                 let sent = 0;
-                for (const { id } of q.allEntityIds.all()) {
-                    if (sequencer.current('reviews', 'entity', id) == null && q.entity.get(id).state !== 'active') continue;
-                    const before = sequencer.current('reviews', 'entity', id);
-                    const doc = syncEntity(id);
+                for (const { id } of await q.allEntityIds.all()) {
+                    if (await sequencer.current('reviews', 'entity', id) == null && (await q.entity.get(id)).state !== 'active') continue;
+                    const before = await sequencer.current('reviews', 'entity', id);
+                    const doc = await syncEntity(id);
                     if (doc && doc.revision !== before) sent++;
                 }
                 return { sent };
             });
         },
 
-        stats() {
-            const one = (sql) => db.prepare(sql).get().n;
+        async stats() {
+            const one = async (sql) => (await db.prepare(sql).get()).n;
             return {
-                entities: one("SELECT COUNT(*) AS n FROM review_entities WHERE state = 'active'"),
-                signals: one("SELECT COUNT(*) AS n FROM review_signals WHERE status = 'active'"),
-                items_unresolved: one("SELECT COUNT(*) AS n FROM review_source_items WHERE resolution IN ('ambiguous','unmatched') AND state = 'active'"),
-                corrections_open: one("SELECT COUNT(*) AS n FROM review_corrections WHERE status = 'open'"),
-                summaries_flagged: one('SELECT COUNT(*) AS n FROM review_summaries WHERE flagged = 1'),
+                entities: await one("SELECT COUNT(*) AS n FROM review_entities WHERE state = 'active'"),
+                signals: await one("SELECT COUNT(*) AS n FROM review_signals WHERE status = 'active'"),
+                items_unresolved: await one("SELECT COUNT(*) AS n FROM review_source_items WHERE resolution IN ('ambiguous','unmatched') AND state = 'active'"),
+                corrections_open: await one("SELECT COUNT(*) AS n FROM review_corrections WHERE status = 'open'"),
+                summaries_flagged: await one('SELECT COUNT(*) AS n FROM review_summaries WHERE flagged = 1'),
             };
         },
     };
