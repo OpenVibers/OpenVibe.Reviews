@@ -2,7 +2,7 @@
 
 > Review signals gathered across sources with provenance, entity resolution and honest aggregates.
 
-**Status:** alpha (roadmap Wave 17, Reviews half). Tested against stub upstreams and **deployed internally, not launched**: it runs on the production host on 127.0.0.1:4830 only (release `3151c05`, `/api/ready` 200) with an empty database (0 entities, 0 signals), and `openvibe.reviews` still shows its placeholder on OpenVibe.Sites.
+**Status:** alpha (roadmap Wave 17, Reviews half). Tested against stub upstreams and **deployed internally, not launched**: it runs on the production host on 127.0.0.1:4830 only (`/api/ready` 200 on 2026-09-23) with an empty database (0 entities, 0 signals), and `openvibe.reviews` still shows its placeholder on OpenVibe.Sites.
 **Domain:** `openvibe.reviews` · **Port:** 4830 · **Service id:** `reviews`
 **Plan:** OpenVibe End-to-End Realignment & Implementation Plan, revision 3 — roadmap Wave 17, §15.13, §29, §32.
 **License:** AGPL-3.0 (same as every OpenVibe service).
@@ -225,7 +225,24 @@ by editors; signals arrive only from Sources.
 - OpenVibe.Community — discussion threads (`community.comment.write`)
 - OpenVibe.AI — optional, proposes summaries through `reviews.summary.propose`
 - OpenVibe.Search — consumes the index events
-- packages: openvibe-publishing v0.2.1, openvibe-contracts v0.33.0, openvibe-shared v1.5.1, openvibe-sdk v0.5.0
+- packages: openvibe-publishing v0.4.0, openvibe-contracts v0.49.0, openvibe-shared v1.22.0, openvibe-sdk v0.12.0
+
+## Capabilities
+
+Implemented here (the service manifest's `capabilities`, audience `openvibe.reviews`, one per route;
+routes under [API](#api-apiv1)): `reviews.entity.resolve`, `reviews.entity.manage`,
+`reviews.entity.merge`, `reviews.entity.split`, `reviews.signal.import`, `reviews.summary.propose`,
+`reviews.summary.publish` and `reviews.correction.submit`.
+
+Called elsewhere, as the service principal `svc:reviews` (client credentials, one token per audience):
+
+| Service | Grant | Why |
+|---|---|---|
+| OpenVibe.Sources | `sources.item.read`, `sources.source.read` | review items in change order, source names and terms |
+| OpenVibe.Events | `events.event.publish`; `events.subscription.manage` once (`scripts/subscribe.js`) | outbound events; the `sources.item.*` subscription |
+| OpenVibe.Community | `community.comment.write` | discussion threads on entity pages |
+
+Other services call Reviews with `reviews.summary.propose` (OpenVibe.AI) or `reviews.signal.import`.
 
 ## Acceptance (tested in `test/`)
 
@@ -245,6 +262,36 @@ by editors; signals arrive only from Sources.
 Not yet demonstrated: a run against the deployed Sources with a real, enabled review source (none is
 enabled), a real OpenVibe.AI `reviews.summarize_entity` run, and delivery of a real item through the
 deployed Events (the `sources.item.*` subscription exists in production; nothing has been delivered).
+
+## Security
+
+Reporting a vulnerability: [SECURITY.md](SECURITY.md). The authors' threat review, with file:line
+references and the gaps that remain: [docs/threat-review.md](docs/threat-review.md).
+
+- **Auth.** Network JWTs (RS256, verified offline) for people; client-credentials service tokens for
+  audience `openvibe.reviews`, one capability per route, acting for `X-OV-Subject`. Editorial writes
+  need an editor who is a person (staff or `REVIEWS_EDITORS`). A cookie-authenticated write started by
+  another site is 403 `request.cross_site`.
+- **Private data.** Review text is never stored; a correction's text and sender never reach a public
+  surface; editor ids are hidden from readers.
+- **Honesty.** No aggregate without signals; AI text never yields a rating and is never shown before a
+  person approves it.
+- **Egress.** Reviews calls only its configured Network, Sources, Events and Community hosts; it never
+  fetches a URL a user chose.
+- **Secrets.** `OV_OAUTH_CLIENT_SECRET` and `REVIEWS_EVENTS_SECRET` (Events delivery signatures) live
+  in `/etc/openvibe/reviews.env` (0600). nginx answers `/metrics` and `/internal/` with 404.
+
+## Deploy
+
+Production deploys with `sudo ovhost deploy reviews` on the host (strategy `git-checkout`: fetch,
+fast-forward `/opt/openvibe.reviews`, install on a lockfile change, restart, wait for `/api/ready`).
+The unit is `openvibe-reviews.service` on `127.0.0.1:4830`, the env file `/etc/openvibe/reviews.env`. The store is
+`/var/lib/openvibe-reviews/reviews.db`; the nginx reference is
+[deploy/nginx/openvibe.reviews.conf](deploy/nginx/openvibe.reviews.conf) (the domain still serves the
+OpenVibe.Sites placeholder).
+Rollback: ovhost puts the previous sha back by itself when `/api/ready` does not answer 2xx after the
+restart; afterwards `sudo ovhost rollback reviews --to <sha>`. Nothing blocks a rollback: the schema
+code only adds tables and columns.
 
 ## Launch rule
 
