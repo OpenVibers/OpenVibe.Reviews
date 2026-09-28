@@ -160,6 +160,38 @@ The ids and the service manifest are released in openvibe-contracts v0.20.0 (fro
 decides them with the contracts grant rule. `reviews.entity.manage` and
 `reviews.summary.propose` are additions to the §15.13 minimum list.
 
+### Per-actor limits
+
+`/api/v1` and the forms also limit who calls them, once `req.actor` is resolved and a route's
+capability guard passed, before any work (for a form, before its body is read):
+`server/http/actor-limits.js`, openvibe-sdk/limits, roadmap WS-R task 4. Counted: a person as
+`user:usr_…` (their own token or cookie, named by a first-party service in `X-OV-Subject`, or an app's
+`on_behalf_of`); a service or app acting as itself (OpenVibe.AI's proposals, an import service) by its
+principal; a signed-out caller by address, on writes only. Signed-out reads keep only the per-address
+limit (many readers share a carrier or campus address), and a first-party service reading for itself
+is not counted on reads. Past a limit: `429` problem+json `rate_limited` with `Retry-After`, one
+`[Limits]` log line and `reviews_rate_limited_total{limit,window}`. A form and the API route that do
+the same thing share one budget; a form counts only a signed-in person.
+
+| Routes (API and form) | Per caller, a minute / an hour |
+|---|---|
+| Reads, and `POST /resolve` (a lookup) | `REVIEWS_LIMITS_MINUTE` / `REVIEWS_LIMITS_HOUR` (120 / 3000) |
+| Entity create, edit, delete, aliases, links, trust (`/editor/entities/new`, `/e/:slug/edit`) | 30 / 300 |
+| Merge and split | 10 / 100 |
+| Item resolution (`POST /items/:id/resolution`, `/editor/items/:id`) | 60 / 1200 |
+| `POST /signals/import` | 60 / 1200 |
+| Sync now (`POST /sources/sync`, `/editor/sync`) | 2 / 20 |
+| Summary write, review, publish, unpublish | 30 / 300 |
+| Summary proposals (OpenVibe.AI) | 60 / 1200 |
+| Correction submit (`POST …/corrections`, `/e/:slug/correct`) | 5 / 20 |
+| Correction resolve (`PATCH /corrections/:id`, `/editor/corrections/:id`) | 30 / 300 |
+| Discussion comment (`/e/:slug/discuss`, sent to Community) | 20 / 300 |
+
+The per-address limits (API 300 a minute, corrections 20 an hour, forms, sign-in) stay. Never limited
+per actor: `/api/health`, `/api/ready`, `/release.json`, `/metrics`, sign-in, the pages people read,
+and the signed Events deliveries at `/internal/events`. `test/actor-limits.test.js`; the other tests
+boot with `rateLimits: false`, which turns off both kinds.
+
 ## Events
 
 Produced (transactional outbox → OpenVibe.Events when `EVENTS_URL` is set): `reviews.entity.merged`,

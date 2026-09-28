@@ -84,7 +84,7 @@ function summaryFromForm(b) {
     };
 }
 
-function createPages({ svc, platform, sync, viewers, config, log = console }) {
+function createPages({ svc, platform, sync, viewers, config, log = console, limits }) {
     const router = express.Router();
     const form = express.urlencoded({ extended: false, limit: '200kb' });
     router.use(actorMiddleware(viewers, { services: false }));
@@ -95,6 +95,10 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         if (req.method !== 'POST' || !crossSite(req, origin)) return next();
         res.status(403).type('text/plain').set('Cache-Control', 'private, no-store').send('Cross-site form posts are not accepted.');
     });
+
+    // Per-actor limits (http/actor-limits.js): each form names its budget, shared with the API route
+    // that does the same thing, counted for a signed-in person before the form is read.
+    const F = (name) => limits.form(name);
 
     const send = (req, res, status, body, o = {}) => {
         const cacheable = o.cache === 'public' && req.actor.kind === 'anonymous' && status === 200;
@@ -207,7 +211,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         if (!req.actor.subject) return needSignIn(req, res, 'Sign in with your OpenVibe account to send a correction to the editors.');
         send(req, res, 200, views.correctionPage(svc.entityView(e), { values: { target_type: req.query.target_type, target_id: req.query.target_id } }), { title: `Correction: ${e.name}`, robots: 'noindex, nofollow' });
     });
-    router.post('/e/:slug/correct', form, wrap(async (req, res) => {
+    router.post('/e/:slug/correct', F('reviews.correction.submit'), form, wrap(async (req, res) => {
         const e = locate(req, res, '/correct');
         if (!e) return;
         if (!req.actor.subject) return needSignIn(req, res, 'Sign in with your OpenVibe account to send a correction to the editors.');
@@ -221,7 +225,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         }
     }));
 
-    router.post('/e/:slug/discuss', form, wrap(async (req, res) => {
+    router.post('/e/:slug/discuss', F('reviews.discussion.comment'), form, wrap(async (req, res) => {
         const e = locate(req, res, '/discuss');
         if (!e) return;
         if (!req.actor.subject) return needSignIn(req, res, 'Sign in with your OpenVibe account to comment.');
@@ -247,7 +251,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         }), { title: 'Editor desk', robots: 'noindex, nofollow' });
     });
 
-    router.post('/editor/sync', form, wrap(async (req, res) => {
+    router.post('/editor/sync', F('reviews.sources.sync'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
         const pulled = await sync.pull();
         await sync.drain();
@@ -259,7 +263,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         if (!editorOnly(req, res)) return;
         send(req, res, 200, views.newEntityPage({ values: { name: req.query.name || '' } }), { title: 'New entity', robots: 'noindex, nofollow' });
     });
-    router.post('/editor/entities/new', form, wrap(async (req, res) => {
+    router.post('/editor/entities/new', F('reviews.entity.manage'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
         const b = req.body || {};
         const aliases = ['source', 'url', 'gtin', 'sku', 'external'].map((type) => ({ type, value: String(b[`alias_${type}`] || '').trim() })).filter((a) => a.value);
@@ -288,7 +292,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         if (!e) return;
         editPage(req, res, e, { flash: req.query.saved ? 'Saved.' : null, correcting: openCorrectionFor(e, req.query.correction) });
     });
-    router.post('/e/:slug/edit', form, wrap(async (req, res) => {
+    router.post('/e/:slug/edit', F('reviews.entity.manage'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
         let e = locate(req, res, '/edit');
         if (!e) return;
@@ -314,7 +318,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         }
     }));
 
-    router.post('/e/:slug/summary', form, wrap(async (req, res) => {
+    router.post('/e/:slug/summary', F('reviews.summary.publish'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
         const e = locate(req, res, '/summary');
         if (!e) return;
@@ -327,7 +331,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         }
     }));
 
-    router.post('/e/:slug/summary/:n/review', form, wrap(async (req, res) => {
+    router.post('/e/:slug/summary/:n/review', F('reviews.summary.publish'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
         const e = locate(req, res, `/summary/${req.params.n}/review`);
         if (!e) return;
@@ -336,7 +340,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         res.redirect(303, `${svc.entityPath(e)}?saved=1`);
     }));
 
-    router.post('/e/:slug/merge', form, wrap(async (req, res) => {
+    router.post('/e/:slug/merge', F('reviews.entity.merge'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
         const e = locate(req, res, '/merge');
         if (!e) return;
@@ -345,7 +349,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         res.redirect(303, `${svc.entityPath(out.into)}/history#merges`);
     }));
 
-    router.post('/e/:slug/split', form, wrap(async (req, res) => {
+    router.post('/e/:slug/split', F('reviews.entity.merge'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
         const e = svc.findEntity(req.params.slug);
         if (!e) return notFound(req, res);
@@ -362,7 +366,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         const candidates = item.candidates.map((c) => c.entity).filter(Boolean);
         send(req, res, 200, views.itemPage({ item, candidates }), { title: `Item ${item.id}`, robots: 'noindex, nofollow' });
     });
-    router.post('/editor/items/:id', form, wrap(async (req, res) => {
+    router.post('/editor/items/:id', F('reviews.item.resolve'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
         const b = req.body || {};
         if (b.action === 'ignore') svc.ignoreItem(req.params.id, { note: b.note || null }, req.actor);
@@ -373,7 +377,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console }) {
         res.redirect(303, '/editor#items');
     }));
 
-    router.post('/editor/corrections/:id', form, wrap(async (req, res) => {
+    router.post('/editor/corrections/:id', F('reviews.correction.resolve'), form, wrap(async (req, res) => {
         if (!editorOnly(req, res)) return;
         const b = req.body || {};
         svc.resolveCorrection(req.params.id, { status: b.status, note: b.note || null, correction_note: b.correction_note || null }, req.actor);

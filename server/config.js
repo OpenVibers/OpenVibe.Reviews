@@ -25,6 +25,12 @@ function load(env = process.env) {
         host: env.HOST || '127.0.0.1',
         baseUrl,
         trustProxy: env.TRUST_PROXY != null && env.TRUST_PROXY !== '' ? Number(env.TRUST_PROXY) : 2,
+        // Per-actor limits (server/http/actor-limits.js, roadmap WS-R task 4): the API reads one caller
+        // may make per minute and per hour. Edits, summaries and corrections set tighter numbers there.
+        limits: {
+            minute: Math.max(1, int(env.REVIEWS_LIMITS_MINUTE, 120)),
+            hour: Math.max(1, int(env.REVIEWS_LIMITS_HOUR, 3000)),
+        },
         dbPath: env.REVIEWS_DB_PATH || './data/reviews.db',
 
         // Identity: OpenVibe.Network signs user JWTs (SSO) and service tokens (client credentials).

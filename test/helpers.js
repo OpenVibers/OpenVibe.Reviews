@@ -145,9 +145,11 @@ function fakeCommunity() {
 }
 
 /**
- * A running Reviews. opts.env overrides env vars; sources/community are the stubs above.
+ * A running Reviews. opts.env overrides env vars; sources/community are the stubs above. rateLimits
+ * (default false) turns on the per-address and per-actor limits; limitsNow is the per-actor limiter's
+ * clock; log is Reviews' logger (default quiet).
  */
-async function boot({ env = {}, sources = fakeSources(), community = null, dbPath, now, workers = false } = {}) {
+async function boot({ env = {}, sources = fakeSources(), community = null, dbPath, now, workers = false, rateLimits = false, limitsNow = null, log = quiet } = {}) {
     const dir = dbPath ? path.dirname(dbPath) : fs.mkdtempSync(path.join(os.tmpdir(), 'reviews-test-'));
     const config = load({
         NODE_ENV: 'test', PORT: '0', HOST: '127.0.0.1', BASE_URL: 'http://reviews.test',
@@ -164,7 +166,7 @@ async function boot({ env = {}, sources = fakeSources(), community = null, dbPat
         throw new Error(`unexpected outbound fetch ${url}`);
     };
     const h = await start({
-        config, publicKey, log: quiet, listen: true, workers, rateLimits: false, now, fetchImpl,
+        config, publicKey, log, listen: true, workers, rateLimits, limitsNow, now, fetchImpl,
         tokens: { getToken: async () => 'stub-token', authHeaders: async () => ({ Authorization: 'Bearer stub-token' }), invalidate() {} },
     });
     const base = `http://127.0.0.1:${h.server.address().port}`;

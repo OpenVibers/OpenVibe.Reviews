@@ -20,11 +20,12 @@ const { createApi } = require('./http/api');
 const { createPages } = require('./http/pages');
 const { createMachine } = require('./http/machine');
 const { consumerRouter } = require('./http/consumer');
+const { createActorLimits } = require('./http/actor-limits');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const VERSION = require('../package.json').version;
 
-function createApp({ config, svc, viewers, platform, sync, keys, db, log = console, rateLimits = true, fetchImpl = globalThis.fetch }) {
+function createApp({ config, svc, viewers, platform, sync, keys, db, log = console, rateLimits = true, fetchImpl = globalThis.fetch, limitsNow = null }) {
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy);
@@ -104,7 +105,10 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
 
     app.use('/api/', limiter(60000, 300));
     app.use('/api/v1/entities/:ref/corrections', limiter(60 * 60000, 20));
-    app.use('/api/v1', createApi({ svc, viewers, platform, sync, config, log }));
+    // Per-actor limits (http/actor-limits.js) on /api/v1 and the forms, counted once each router resolved
+    // req.actor; the per-address limits here stay. limitsNow: the limiter's clock (tests).
+    const limits = createActorLimits({ config, now: limitsNow || (() => Date.now()), registry: metrics.registry, log, enabled: rateLimits });
+    app.use('/api/v1', createApi({ svc, viewers, platform, sync, config, log, limits }));
     app.use('/api', (req, res) => http.sendProblem(res, 404, 'route.not_found', { detail: 'Not found' }));
 
     // This site's own pinned copy of the OpenVibe Frame's browser files (openvibe-shared/serve).
@@ -123,7 +127,7 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
 
     app.post(['/e/*', '/editor/*'], limiter(10 * 60000, 120));
     app.post('/e/:slug/correct', limiter(60 * 60000, 20));
-    const pages = createPages({ svc, platform, sync, viewers, config, log });
+    const pages = createPages({ svc, platform, sync, viewers, config, log, limits });
     app.use(pages.router);
 
     app.use((req, res) => pages.errorPage(req, res, 404, 'Not found', 'Nothing lives at that address.'));
