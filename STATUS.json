@@ -8,7 +8,7 @@
   "port": 4830,
   "domain": "openvibe.reviews",
   "contracts": "openvibe-contracts v0.49.0",
-  "packages": ["openvibe-publishing v0.4.0", "openvibe-shared v1.22.0", "openvibe-sdk v0.12.0"],
+  "packages": ["openvibe-publishing v0.4.0", "openvibe-shared v1.25.0", "openvibe-sdk v0.12.0"],
   "capabilities": [
     "reviews.entity.resolve",
     "reviews.entity.manage",
