@@ -151,14 +151,17 @@ async function boot({ env = {}, sources = fakeSources(), community = null, now, 
     const config = load({
         NODE_ENV: 'test', PORT: '0', HOST: '127.0.0.1', BASE_URL: 'http://reviews.test',
         OV_NETWORK_URL: ISSUER, OV_NETWORK_INTERNAL_URL: '', REVIEWS_GATE_MIN_WORDS: '20',
+        OV_OAUTH_CLIENT_SECRET: 'test-service-secret-not-a-real-one',
         OV_SOURCES_INTERNAL_URL: 'http://sources.test', OV_COMMUNITY_INTERNAL_URL: 'http://community.test',
         REVIEWS_EDITORS: EDITOR, REVIEWS_EVENTS_SECRET: WEBHOOK_SECRET,
         ...env,
     });
     const fetchImpl = async (url, opts) => {
-        const host = new URL(url).host;
-        if (host === 'sources.test') return sources.fetch(url, opts);
-        if (host === 'community.test' && community) return community.fetch(url, opts);
+        const u = new URL(url);
+        // The ingest chassis' Sources client mints a client-credentials token here (no network in tests).
+        if (u.pathname === '/oauth/token') return { status: 200, ok: true, json: async () => ({ access_token: 'stub-sources-token', token_type: 'Bearer', expires_in: 300, scope: 'sources.item.read sources.source.read' }) };
+        if (u.host === 'sources.test') return sources.fetch(url, opts);
+        if (u.host === 'community.test' && community) return community.fetch(url, opts);
         throw new Error(`unexpected outbound fetch ${url}`);
     };
     // One database per boot (PGlite, or REVIEWS_TEST_STORE=pg: the containers), dropped when the boot stops.

@@ -4,7 +4,7 @@
  *
  *   Pages (SSR, useful without JavaScript)      server/http/pages.js
  *   /api/v1 (people and service principals)     server/http/api.js
- *   POST /internal/events (signed webhook)      server/http/consumer.js
+ *   POST /internal/events (signed webhook)      server/http/events.js
  *   Discovery: robots, sitemaps, feeds, llms    server/http/machine.js
  *   /auth/* (Network SSO)                       server/auth/session.js
  *   GET /api/health, /api/ready, /release.json, /metrics (loopback only)
@@ -19,7 +19,7 @@ const { createSessionRoutes } = require('./auth/session');
 const { createApi } = require('./http/api');
 const { createPages } = require('./http/pages');
 const { createMachine } = require('./http/machine');
-const { consumerRouter } = require('./http/consumer');
+const { createEvents } = require('./http/events');
 const { createActorLimits } = require('./http/actor-limits');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -41,7 +41,7 @@ function lagged(read, initial) {
     };
 }
 
-function createApp({ config, svc, viewers, platform, sync, keys, db, log = console, rateLimits = true, fetchImpl = globalThis.fetch, limitsNow = null, indexnow = null }) {
+function createApp({ config, svc, viewers, platform, sources, sync, keys, db, log = console, rateLimits = true, fetchImpl = globalThis.fetch, limitsNow = null, indexnow = null }) {
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy);
@@ -100,7 +100,7 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
     if (indexnow && indexnow.enabled) app.use(indexnow.keyFile);
 
     // Signed deliveries from OpenVibe.Events. Loopback/internal only in nginx (not proxied publicly).
-    const consumer = consumerRouter({ db, svc, sync, config, log });
+    const consumer = createEvents({ db, svc, sync, config, log });
     app.use('/internal', http.middleware(), consumer.router);
 
     app.get('/api/health', (_req, res) => res.json({ status: 'ok', service: 'openvibe-reviews', version: VERSION }));
@@ -121,7 +121,7 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
             },
             { name: 'valkey', required: false, check: async () => (valkey ? valkey.ready() : { skipped: 'VALKEY_URL not set: per-actor limits count in this process only' }) },
             { name: 'network_jwks', required: false, check: () => { if (keys.loaded()) return true; keys.ensure().catch(() => {}); return 'Network signing key not loaded yet: sign-in and token calls answer 503'; } },
-            { name: 'sources', required: false, check: () => platform.sources.configured || 'not configured: no review items are read, so no signals and no aggregates exist' },
+            { name: 'sources', required: false, check: () => sources.enabled || 'not configured: no review items are read, so no signals and no aggregates exist' },
             { name: 'events_relay', required: false, check: () => (platform.eventsConfigured ? true : 'EVENTS_URL or the service principal is not configured: events wait in the outbox') },
             { name: 'events_webhook', required: false, check: () => (config.eventsWebhookSecrets.length ? true : 'REVIEWS_EVENTS_SECRET is not set: sources.item.* deliveries are refused; the pull sync still runs') },
             { name: 'community', required: false, check: () => platform.community.configured || 'not configured: discussions show as unavailable' },
@@ -140,7 +140,7 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
     // Per-actor limits (http/actor-limits.js) on /api/v1 and the forms, counted once each router resolved
     // req.actor; the per-address limits here stay. limitsNow: the limiter's clock (tests).
     const limits = createActorLimits({ config, now: limitsNow || (() => Date.now()), registry: metrics.registry, log, enabled: rateLimits, valkey });
-    app.use('/api/v1', createApi({ svc, viewers, platform, sync, config, log, limits }));
+    app.use('/api/v1', createApi({ svc, viewers, sources, sync, config, log, limits }));
     app.use('/api', (req, res) => http.sendProblem(res, 404, 'route.not_found', { detail: 'Not found' }));
 
     // This site's own pinned copy of the OpenVibe Frame's browser files (openvibe-shared/serve).

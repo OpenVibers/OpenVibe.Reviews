@@ -39,7 +39,7 @@ t('with a key the key file answers text/plain with the key', async () => {
     } finally { await h.stop(); }
 });
 
-t('a draft never pings; a publish pings the page path and the sitemap; an unpublish pings again', async () => {
+t('a draft never pings; a publish pings the page path and the sitemap; a page that only goes noindex is never pinged', async () => {
     // A spy in place of the module's HTTP send: records every pingSoon batch.
     const pings = [];
     const spy = {
@@ -65,7 +65,8 @@ t('a draft never pings; a publish pings the page path and the sitemap; an unpubl
         pings.length = 0;
         const unpub = await req(h, 'POST', `/api/v1/entities/${e.slug}/summary/unpublish`, { token: editorToken() });
         assert.strictEqual(unpub.status, 200, unpub.text);
-        assert.ok(pings.includes('http://reviews.test/e/portal-2'), JSON.stringify(pings));
-        assert.ok(pings.includes('http://reviews.test/sitemap.xml'), JSON.stringify(pings));
+        // The entity page stays (its signals remain) but goes noindex: the chassis pings an indexable
+        // page that appeared or changed, or one Search had that went away — never a noindex page.
+        assert.deepStrictEqual(pings, [], 'a page that stays but goes noindex is never pinged');
     } finally { await h.stop(); }
 });

@@ -1,0 +1,144 @@
+{
+  "entities": [
+    {
+      "name": "Portal 2",
+      "kind": "game",
+      "state": "active"
+    }
+  ],
+  "aliases": [
+    {
+      "type": "name",
+      "norm": "portal 2",
+      "entity": "Portal 2"
+    },
+    {
+      "type": "source",
+      "norm": "steam-reviews-portal-2",
+      "entity": "Portal 2"
+    }
+  ],
+  "sources": [
+    {
+      "key": "shop-example",
+      "name": null,
+      "status": null,
+      "stale": null,
+      "terms_note": "Terms recorded by a person in OpenVibe.Sources (test).",
+      "license_note": null
+    },
+    {
+      "key": "steam-reviews-portal-2",
+      "name": null,
+      "status": null,
+      "stale": null,
+      "terms_note": "Terms recorded by a person in OpenVibe.Sources (test).",
+      "license_note": null
+    }
+  ],
+  "items": [
+    {
+      "item": "https://shop.example/p/widget",
+      "revision": 1,
+      "source_key": "shop-example",
+      "kind": "product",
+      "state": "active",
+      "resolution": "unmatched",
+      "content_hash": "03bc67c96857ad6916c2177a93b415c5a9783cae7efc5cf68d97c6981a13cf7b",
+      "entity": null
+    },
+    {
+      "item": "review-a",
+      "revision": 2,
+      "source_key": "steam-reviews-portal-2",
+      "kind": "review_signal",
+      "state": "active",
+      "resolution": "resolved",
+      "content_hash": "3235d635f9c78563605be8633de352392a0e96e0aba6c4105247a0441441cca6",
+      "entity": "Portal 2"
+    },
+    {
+      "item": "review-b",
+      "revision": 1,
+      "source_key": "steam-reviews-portal-2",
+      "kind": "review_signal",
+      "state": "removed",
+      "resolution": "resolved",
+      "content_hash": "3235d635f9c78563605be8633de352392a0e96e0aba6c4105247a0441441cca6",
+      "entity": "Portal 2"
+    }
+  ],
+  "signals": [
+    {
+      "item": "review-a",
+      "revision": 1,
+      "type": "recommendation",
+      "status": "superseded",
+      "recommended": 1,
+      "positive_count": null,
+      "total_count": null,
+      "entity": "Portal 2"
+    },
+    {
+      "item": "review-a",
+      "revision": 2,
+      "type": "recommendation",
+      "status": "active",
+      "recommended": 0,
+      "positive_count": null,
+      "total_count": null,
+      "entity": "Portal 2"
+    },
+    {
+      "item": "review-b",
+      "revision": 1,
+      "type": "recommendation",
+      "status": "withdrawn",
+      "recommended": 0,
+      "positive_count": null,
+      "total_count": null,
+      "entity": "Portal 2"
+    }
+  ],
+  "aggregates": [
+    {
+      "entity": "Portal 2",
+      "result": {
+        "components": {
+          "recommendation": {
+            "inputs": [
+              "review-a#2"
+            ],
+            "percent": 0,
+            "positive": 0,
+            "total": 1
+          }
+        },
+        "computation": [
+          "recommendation: 0 of 1 recommend (0%) = sum of positives / sum of totals over 1 signal"
+        ],
+        "excluded": [],
+        "inputs": [
+          {
+            "entity_id": "Portal 2",
+            "observed_at": "2026-09-20T13:00:01.000Z",
+            "recommended": false,
+            "signal_id": "review-a#2",
+            "source_item_id": "item:review-a",
+            "source_key": "steam-reviews-portal-2",
+            "type": "recommendation",
+            "weight": 1
+          }
+        ],
+        "method": "reviews-aggregate@1",
+        "observed": {
+          "earliest": "2026-09-20T13:00:01.000Z",
+          "latest": "2026-09-20T13:00:01.000Z"
+        },
+        "sources": [
+          "steam-reviews-portal-2"
+        ]
+      }
+    }
+  ]
+}

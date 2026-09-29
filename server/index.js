@@ -8,11 +8,12 @@
  * clock/fetch/log/tokens/keys, and returns handles to every part. Workers (the Sources pull, the
  * import queue, the Events outbox relay) run only when asked (`workers: true`).
  */
+const { createSourcesClient } = require('openvibe-publishing/ingest');
 const { load } = require('./config');
 const { openDb, createStores } = require('./db');
 const { createPlatform } = require('./integrations/platform');
 const { createReviewsService } = require('./reviews/service');
-const { createSourcesSync } = require('./reviews/sync');
+const { createSourcesSync } = require('./reviews/source-items');
 const { createKeyStore } = require('./auth/keys');
 const { createViewerResolver } = require('./auth/viewer');
 const { createApp } = require('./app');
@@ -24,22 +25,25 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const db = givenDb || await openDb(config, { log });
     const stores = createStores(db, { now });
     const platform = createPlatform({ config, db, fetchImpl, tokens, now, log });
+    // The Sources client is the ingest chassis (openvibe-publishing/ingest): the client-credentials
+    // token for audience openvibe.sources and the change-order items API live there now.
+    const sources = createSourcesClient({ config, fetchImpl, now });
     // IndexNow (openvibe-shared/indexnow): created once at boot from INDEXNOW_KEY. Unset → off, nothing
     // mounted, nothing sent; tests and drills never set it (nor hand one in).
     const indexnow = givenIndexnow !== undefined ? givenIndexnow : createIndexNow({ host: config.baseUrl, key: config.indexnow.key, fetch: fetchImpl, log });
     const svc = createReviewsService({ db, stores, outbox: platform.outbox, config, now, log, indexnow });
-    const sync = createSourcesSync({ db, svc, platform, config, now, log });
+    const sync = createSourcesSync({ db, svc, sources, config, now, log });
     const keys = createKeyStore({ config, fetchImpl, log, publicKey });
     keys.ensure().catch(() => {});
     const viewers = createViewerResolver({ keys, config });
-    const app = createApp({ config, svc, viewers, platform, sync, keys, db, log, rateLimits, fetchImpl, limitsNow, indexnow });
+    const app = createApp({ config, svc, viewers, platform, sources, sync, keys, db, log, rateLimits, fetchImpl, limitsNow, indexnow });
 
     // Search holds whatever the current rules say (idempotent: unchanged documents are not re-sent).
     try { await svc.reconcileIndex(); } catch (err) { log.warn(`[Reviews] index reconcile: ${err.message}`); }
 
     const timers = [];
     if (workers) {
-        if (config.sync.enabled && platform.sources.configured) {
+        if (config.sync.enabled && sources.enabled) {
             const pull = () => sync.pull().then((r) => { if (!r.ok) log.warn(`[Reviews] Sources pull: ${r.reason}`); }).catch((err) => log.warn(`[Reviews] Sources pull: ${err.message}`));
             timers.push(setTimeout(pull, 5000));
             timers.push(setInterval(pull, config.sync.intervalMs));

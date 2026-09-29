@@ -4,7 +4,7 @@
  * identifiers wait for an editor, and every editorial decision is recorded.
  */
 const assert = require('assert');
-const norm = require('../server/reviews/normalize');
+const { normalize: norm } = require('openvibe-publishing/ingest');
 const {
     boot, req, suite, productItem, importItem, createEntity, editorToken, readerToken, serviceToken,
 } = require('./helpers');

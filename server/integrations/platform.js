@@ -1,8 +1,9 @@
 'use strict';
 /**
- * Clients for the services Reviews composes (roadmap §29): Events (outbox relay), Sources (review
- * items with provenance) and Community (discussion threads). Each call uses a Network
- * client-credentials token for svc:reviews, minted per audience by the SDK token client.
+ * The product-specific service clients Reviews composes (roadmap §29): Events (the outbox relay) and
+ * Community (discussion threads). Each call uses a Network client-credentials token for svc:reviews,
+ * minted per audience by the SDK token client. The Sources client is the ingest chassis
+ * (openvibe-publishing/ingest.createSourcesClient), created in server/index.js.
  *
  * Every integration is optional. Missing configuration or an unreachable service is an explicit
  * failure (an error with a stable code, or `configured: false`), never invented data.
@@ -17,8 +18,6 @@ class IntegrationError extends Error {
 }
 
 const SUBJECT_RE = /^(usr|gst)_[0-9A-HJKMNP-TV-Z]{26}$/;
-const ITEM_RE = /^itm_[0-9A-HJKMNP-TV-Z]{26}$/;
-const SOURCE_KEY_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 
 function createPlatform({ config, db, fetchImpl = globalThis.fetch, tokens = null, now = () => Date.now(), log = console } = {}) {
     const tokenClient = tokens || (config.oauth.clientSecret
@@ -62,44 +61,6 @@ function createPlatform({ config, db, fetchImpl = globalThis.fetch, tokens = nul
         return { status: res.status, body };
     }
 
-    // ── Sources: review items (sources.item.read) and source records (sources.source.read) ──
-    const sources = {
-        configured: !!(tokenClient && config.sourcesInternalUrl),
-        requireConfigured() {
-            if (!sources.configured) throw new IntegrationError(503, 'sources.unavailable', 'OpenVibe.Sources is not configured (OV_SOURCES_INTERNAL_URL and the service principal)');
-        },
-        /** One item with its provenance. → { item, source } */
-        async getItem(id) {
-            if (!ITEM_RE.test(String(id || ''))) throw new IntegrationError(422, 'signal.invalid_source_item', 'A Sources item id looks like itm_<ULID>');
-            sources.requireConfigured();
-            const r = await getJson(`${config.sourcesInternalUrl}/api/v1/items/${encodeURIComponent(id)}`, 'openvibe.sources');
-            if (r.status === 404) throw new IntegrationError(404, 'signal.source_item_not_found', `Sources has no item ${id}`);
-            if (r.status !== 200 || !r.body || !r.body.item) throw new IntegrationError(503, 'sources.unavailable', `Sources answered ${r.status}`);
-            return { item: r.body.item, source: r.body.source || null };
-        },
-        /** Items of category `reviews` in change order (creations, revisions, removals). */
-        async listItems({ after = 0, limit = 200 } = {}) {
-            sources.requireConfigured();
-            const u = new URL(`${config.sourcesInternalUrl}/api/v1/items`);
-            u.searchParams.set('category', 'reviews');
-            u.searchParams.set('include_removed', '1');
-            u.searchParams.set('after', String(after));
-            u.searchParams.set('limit', String(limit));
-            const r = await getJson(u.toString(), 'openvibe.sources');
-            if (r.status !== 200 || !r.body || !Array.isArray(r.body.items)) throw new IntegrationError(503, 'sources.unavailable', `Sources answered ${r.status}`);
-            return r.body;
-        },
-        /** The source record (name, homepage, notes). null when Sources does not know it. */
-        async getSource(key) {
-            if (!SOURCE_KEY_RE.test(String(key || ''))) return null;
-            sources.requireConfigured();
-            const r = await getJson(`${config.sourcesInternalUrl}/api/v1/sources/${encodeURIComponent(key)}`, 'openvibe.sources');
-            if (r.status === 404) return null;
-            if (r.status !== 200 || !r.body) throw new IntegrationError(503, 'sources.unavailable', `Sources answered ${r.status}`);
-            return r.body.source || r.body;
-        },
-    };
-
     // ── Community: comment threads (reference, never copy) ──
     const communityBase = config.communityInternalUrl || config.communityUrl;
     const discussionClient = createDiscussionClient({ communityUrl: communityBase, tokenClient: forAudience('openvibe.community'), fetchImpl });
@@ -136,7 +97,7 @@ function createPlatform({ config, db, fetchImpl = globalThis.fetch, tokens = nul
     };
 
     return {
-        tokenClient, sdk, events, outbox, sources, community,
+        tokenClient, sdk, events, outbox, community,
         eventsConfigured: !!(tokenClient && config.eventsUrl),
     };
 }

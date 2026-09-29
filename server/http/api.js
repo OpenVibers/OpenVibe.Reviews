@@ -44,7 +44,7 @@ const { checkCapability } = require('../auth/capabilities');
 
 const { http } = contracts;
 
-function createApi({ svc, viewers, platform, sync, config, log = console, limits }) {
+function createApi({ svc, viewers, sources, sync, config, log = console, limits }) {
     const router = express.Router();
     router.use(http.middleware());
     router.use(express.json({ limit: '256kb' }));
@@ -136,7 +136,7 @@ function createApi({ svc, viewers, platform, sync, config, log = console, limits
         const a = req.actor;
         if (a.kind === 'anonymous' || (a.kind === 'user' && !svc.access.isEditor(a))) throw new svc.ReviewsError(403, 'reviews.editor_required', 'Importing is for Reviews editors and granted services');
         const b = body(req);
-        const out = await svc.importItem(b.source_item_id || b.item_id, platform.sources, a);
+        const out = await svc.importItem(b.source_item_id || b.item_id, sources, a);
         return { outcome: out.outcome, item: await svc.itemView(out.item), signal: out.signal ? await svc.signalView(out.signal) : null };
     }));
     router.post('/sources/sync', guard('reviews.signal.import'), B('reviews.sources.sync'), R(async (req) => {

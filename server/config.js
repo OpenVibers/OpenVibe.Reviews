@@ -69,13 +69,22 @@ function load(env = process.env) {
         eventsWebhookSecrets: list(env.REVIEWS_EVENTS_SECRET, ''),
         communityUrl: trim(env.OV_COMMUNITY_URL || 'https://openvibe.community'),
         communityInternalUrl: trim(env.OV_COMMUNITY_INTERNAL_URL || ''),
-        sourcesInternalUrl: trim(env.OV_SOURCES_INTERNAL_URL || ''),
+
+        // OpenVibe.Sources: the reviews items Reviews ingests (category=reviews). Reads need
+        // sources.item.read (and, optionally, sources.source.read for source names and health). The
+        // client, the change cursor and the pull loop are the ingest chassis (openvibe-publishing/ingest).
+        sources: {
+            internalUrl: trim(env.OV_SOURCES_INTERNAL_URL || ''),
+            category: 'reviews',
+            timeoutMs: int(env.REVIEWS_SOURCES_TIMEOUT_MS, 10000),
+        },
 
         // Pulling review items from OpenVibe.Sources (sources.item.read) in change order.
         sync: {
             enabled: bool(env.REVIEWS_SOURCES_SYNC, true),
             intervalMs: int(env.REVIEWS_SOURCES_SYNC_INTERVAL_MS, 5 * 60 * 1000),
             pageSize: Math.min(500, Math.max(1, int(env.REVIEWS_SOURCES_PAGE_SIZE, 200))),
+            maxPages: Math.max(1, int(env.REVIEWS_SOURCES_MAX_PAGES, 25)),
             queueIntervalMs: int(env.REVIEWS_IMPORT_QUEUE_INTERVAL_MS, 15000),
         },
 
