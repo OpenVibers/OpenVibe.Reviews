@@ -32,6 +32,11 @@ function asset(rel) {
 /** The ?v= this process renders for a public/ file (the static route caches only that one as immutable). */
 function assetVersion(rel) { asset(rel); return hashes.get(rel); }
 
+// The deployed release (app.js sets it from openvibe-shared/release): openvibe-shared/boost swaps a page in place only
+// between pages of the same release, and does a normal load across a deploy.
+let RELEASE = 'dev';
+function setRelease(id) { if (id) RELEASE = String(id); }
+
 const LINKS = [
     { label: 'Entities', href: '/', key: 'home' },
     { label: 'How it works', href: '/about', key: 'about' },
@@ -45,7 +50,7 @@ function navConfig(o, config) {
         history: { type: 'page', title: o.title || SITE_NAME },
         silentLogin: `${config.baseUrl}/auth/login?silent=1&next={url}`,
         sessionUrl: '/auth/me',
-        loginUrl: `/auth/login?next=${encodeURIComponent(o.path || '/')}`,
+        loginUrl: '/auth/login?next={path}',   // filled from the current page (boost moves between pages)
         logoutUrl: '/auth/logout?next={path}',   // Sign out in the shared navbar ends this site's session too
         notificationsRealtime: true,   // the bell hears new notifications over OpenVibe.Events (Shared 1.22.0)
     };
@@ -83,6 +88,8 @@ ${feeds.map((f) => `<link rel="alternate" type="${f.type}" title="${esc(f.title)
 <script src="${ovServe.url('theme-loader.js')}" defer></script>
 <script src="${ovServe.url('navbar.js')}" defer></script>
 <script src="${ovServe.url('footer.js')}" defer></script>
+<meta name="ov-boost" content="reviews@${esc(RELEASE)}">
+<script src="${ovServe.url('boost.js')}" data-main="#main" defer></script>
 </head>
 <body>
 <a class="rv-skip" href="#main">Skip to content</a>
@@ -105,4 +112,4 @@ document.addEventListener('DOMContentLoaded', function () {
 </html>`;
 }
 
-module.exports = { renderPage, asset, SITE_NAME, DEFAULT_DESCRIPTION, NETWORK_URL, assetVersion };
+module.exports = { renderPage, asset, assetVersion, setRelease, SITE_NAME, DEFAULT_DESCRIPTION, NETWORK_URL };

@@ -49,6 +49,7 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
     require('openvibe-shared/trace').install(app);
 
     const release = require('openvibe-shared/release').createRelease({ service: 'reviews', root: path.join(__dirname, '..') });
+    require('./render/layout').setRelease(release.release);
     // Valkey (ADR-035): shared, never-authoritative state (per-actor limit counters). Optional.
     const valkey = config.valkey.url ? require('openvibe-sdk/valkey').createValkey({ url: config.valkey.url, prefix: config.valkey.prefix, log }) : null;
     const metrics = require('openvibe-shared/metrics').instrument(app, { service: 'reviews', release: release.release });
