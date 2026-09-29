@@ -147,7 +147,7 @@ function fakeCommunity() {
  * (default false) turns on the per-address and per-actor limits; limitsNow is the per-actor limiter's
  * clock; log is Reviews' logger (default quiet).
  */
-async function boot({ env = {}, sources = fakeSources(), community = null, now, workers = false, rateLimits = false, limitsNow = null, log = quiet } = {}) {
+async function boot({ env = {}, sources = fakeSources(), community = null, now, workers = false, rateLimits = false, limitsNow = null, log = quiet, indexnow } = {}) {
     const config = load({
         NODE_ENV: 'test', PORT: '0', HOST: '127.0.0.1', BASE_URL: 'http://reviews.test',
         OV_NETWORK_URL: ISSUER, OV_NETWORK_INTERNAL_URL: '', REVIEWS_GATE_MIN_WORDS: '20',
@@ -164,7 +164,7 @@ async function boot({ env = {}, sources = fakeSources(), community = null, now, 
     // One database per boot (PGlite, or REVIEWS_TEST_STORE=pg: the containers), dropped when the boot stops.
     const testdb = await testDb();
     const h = await start({
-        config, db: testdb.db, publicKey, log, listen: true, workers, rateLimits, limitsNow, now, fetchImpl,
+        config, db: testdb.db, publicKey, log, listen: true, workers, rateLimits, limitsNow, now, fetchImpl, indexnow,
         tokens: { getToken: async () => 'stub-token', authHeaders: async () => ({ Authorization: 'Bearer stub-token' }), invalidate() {} },
     });
     const base = `http://127.0.0.1:${h.server.address().port}`;

@@ -41,7 +41,7 @@ function lagged(read, initial) {
     };
 }
 
-function createApp({ config, svc, viewers, platform, sync, keys, db, log = console, rateLimits = true, fetchImpl = globalThis.fetch, limitsNow = null }) {
+function createApp({ config, svc, viewers, platform, sync, keys, db, log = console, rateLimits = true, fetchImpl = globalThis.fetch, limitsNow = null, indexnow = null }) {
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy);
@@ -95,6 +95,9 @@ function createApp({ config, svc, viewers, platform, sync, keys, db, log = conso
     app.use('/auth/', limiter(15 * 60000, 60));
     app.use('/auth', createSessionRoutes({ config, viewers, log, fetchImpl }));
     { const legal = require('openvibe-shared/legal'); app.get(legal.PATHS, legal.handler({ id: 'reviews', service: 'reviews', host: 'openvibe.reviews', name: 'OpenVibe.Reviews', profile: 'ugc' })); }
+
+    // GET /<key>.txt — the IndexNow key file (mounted only when a key is configured; it serves itself).
+    if (indexnow && indexnow.enabled) app.use(indexnow.keyFile);
 
     // Signed deliveries from OpenVibe.Events. Loopback/internal only in nginx (not proxied publicly).
     const consumer = consumerRouter({ db, svc, sync, config, log });

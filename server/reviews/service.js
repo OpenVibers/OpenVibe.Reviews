@@ -55,7 +55,7 @@ const RATING_TEXT_RE = new RegExp([
 
 const toIso = (ms) => (ms == null ? null : new Date(ms).toISOString());
 
-function createReviewsService({ db, stores, outbox, config, now = () => Date.now(), log = console }) {
+function createReviewsService({ db, stores, outbox, config, now = () => Date.now(), log = console, indexnow = null }) {
     const { revisions, reviews, redirects, discussions, sequencer } = stores;
     const access = createAccess(config);
     const origin = config.baseUrl;
@@ -158,6 +158,10 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
     const tx = async (fn) => await db.tx(async () => await fn());   // ambient: plain db calls inside join it
     const entityPath = (e) => `/e/${encodeURIComponent(e.slug)}`;
     const entityUrl = (e) => seo.canonicalUrl(origin, entityPath(e));
+    const sitemapUrl = seo.canonicalUrl(origin, '/sitemap.xml');
+    // IndexNow (openvibe-shared/indexnow): tell the engines when a public, indexable entity page
+    // appears, changes or disappears. Never for drafts, private or noindex pages; off without a key.
+    const pinger = indexnow && indexnow.enabled ? indexnow : null;
     const parse = (s, d) => { try { return s == null ? d : JSON.parse(s); } catch { return d; } };
 
     function actorId(actor) {
@@ -1108,6 +1112,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             return await tx(async () => {
                 const e = await entityOrFail(ref);
                 if (e.state !== 'active') fail(409, 'entity.not_active', `This entity is ${e.state}`);
+                const wasIndexable = pinger ? (await decide(e)).indexable : false;
                 const next = { ...e };
                 const changes = {};
                 if (name != null && name !== e.name) { next.name = checkName(name); changes.name = [e.name, next.name]; await insertAlias(e.id, 'name', next.name, actor); }
@@ -1126,7 +1131,13 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                     .run(next.name, next.kind, next.description, next.slug, next.noindex, now(), e.id);
                 if (Object.keys(changes).length) await audit(actor, 'entity.updated', e.id, null, changes);
                 await syncEntity(e.id);
-                return await q.entity.get(e.id);
+                const fresh = await q.entity.get(e.id);
+                // IndexNow: the old URL changed or left the index; the new one appeared or changed.
+                if (pinger) {
+                    if (wasIndexable) pinger.pingSoon([entityUrl(e), sitemapUrl]);
+                    if ((await decide(fresh)).indexable) pinger.pingSoon([entityUrl(fresh), sitemapUrl]);
+                }
+                return fresh;
             });
         },
 
@@ -1135,12 +1146,15 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             return await tx(async () => {
                 const e = await entityOrFail(ref);
                 if (e.state !== 'active') fail(409, 'entity.not_active', `This entity is ${e.state}`);
+                const wasIndexable = pinger ? (await decide(e)).indexable : false;
                 if ((await q.mergedInto.all(e.id)).length) fail(409, 'entity.has_merges', 'Split the entities merged into this one first');
                 const active = await q.activeSignalsOfEntity.all(e.id);
                 if (active.length) fail(409, 'entity.has_signals', 'This entity has live signals: reattribute or ignore their items first');
                 await db.prepare("UPDATE review_entities SET state = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ?").run(now(), now(), e.id);
                 await audit(actor, 'entity.deleted', e.id, null, { note });
                 await syncEntity(e.id);
+                // IndexNow: the page left the index (only if it was a public, indexable page).
+                if (pinger && wasIndexable) pinger.pingSoon([entityUrl(e), sitemapUrl]);
                 return await q.entity.get(e.id);
             });
         },
@@ -1468,6 +1482,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                 if (rev.meta && rev.meta.system && !(review && review.decision === 'approved')) fail(409, 'summary.review_required', 'A revision prepared after a source change is published only after an editor approves it');
                 const bad = (await citationState(e.id, rev)).filter((p) => !p.supported);
                 if (bad.length) fail(409, 'summary.unsupported_points', `${bad.length} point(s) cite no live signal of this entity`, { points: bad.map((p) => p.key) });
+                const wasIndexable = pinger ? (await decide(e)).indexable : false;
                 const wasPublished = summary.state === 'published';
                 const before = summary.published_revision;
                 await q.publishSummary.run({ id: summary.id, n, now: now() });
@@ -1485,6 +1500,8 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                         extra: { entity_id: e.id, entity_slug: fresh.slug, authorship: rec ? hooks.AUTHORSHIP[rec.mode] : null, ...(rev.meta && rev.meta.correction ? { correction: { note: rev.meta.correction.note, corrects: rev.meta.correction.corrects } } : {}) },
                     }));
                 }
+                // IndexNow: the entity page appeared or changed; never a draft or a non-indexable page.
+                if (pinger && (decision.indexable || wasIndexable)) pinger.pingSoon([entityUrl(fresh), sitemapUrl]);
                 return await q.summary.get(e.id);
             });
         },
@@ -1495,13 +1512,17 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                 const e = await entityOrFail(ref);
                 const summary = await q.summary.get(e.id);
                 if (!summary || summary.state !== 'published') fail(409, 'summary.not_published', 'Nothing is published');
+                const wasIndexable = pinger ? (await decide(e)).indexable : false;
                 await q.unpublishSummary.run(now(), summary.id);
                 await audit(actor, 'summary.unpublished', e.id, summary.id, { revision: summary.published_revision });
                 const doc = await syncEntity(e.id);
                 const fresh = await q.entity.get(e.id);
+                const decision = await decide(fresh);
+                // IndexNow: the page changed or left the index; only when it was or is a public, indexable page.
+                if (pinger && (wasIndexable || decision.indexable)) pinger.pingSoon([entityUrl(fresh), sitemapUrl]);
                 await emit(hooks.publicationEvent({
                     product: 'reviews', type: 'summary', action: 'unpublished', id: summary.id, revision: summary.published_revision,
-                    actor: hooks.subjectRef(actorId(actor)), decision: await decide(fresh), now: now(),
+                    actor: hooks.subjectRef(actorId(actor)), decision, now: now(),
                     document: { owner: 'reviews', type: 'summary', id: summary.id, revision: doc ? doc.revision : 0, deleted: true },
                     extra: { entity_id: e.id, entity_slug: fresh.slug },
                 }));

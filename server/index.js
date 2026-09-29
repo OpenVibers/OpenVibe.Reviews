@@ -16,19 +16,23 @@ const { createSourcesSync } = require('./reviews/sync');
 const { createKeyStore } = require('./auth/keys');
 const { createViewerResolver } = require('./auth/viewer');
 const { createApp } = require('./app');
+const { createIndexNow } = require('openvibe-shared/indexnow');
 
-async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, tokens = null, publicKey = null, log = console, listen = true, workers = listen, rateLimits = true, limitsNow = null } = {}) {
+async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, tokens = null, publicKey = null, log = console, listen = true, workers = listen, rateLimits = true, limitsNow = null, indexnow: givenIndexnow = undefined } = {}) {
     config = config || load();
     // PostgreSQL (ADR-035): opened and migrated here unless the caller (a test) hands in a migrated handle.
     const db = givenDb || await openDb(config, { log });
     const stores = createStores(db, { now });
     const platform = createPlatform({ config, db, fetchImpl, tokens, now, log });
-    const svc = createReviewsService({ db, stores, outbox: platform.outbox, config, now, log });
+    // IndexNow (openvibe-shared/indexnow): created once at boot from INDEXNOW_KEY. Unset → off, nothing
+    // mounted, nothing sent; tests and drills never set it (nor hand one in).
+    const indexnow = givenIndexnow !== undefined ? givenIndexnow : createIndexNow({ host: config.baseUrl, key: config.indexnow.key, fetch: fetchImpl, log });
+    const svc = createReviewsService({ db, stores, outbox: platform.outbox, config, now, log, indexnow });
     const sync = createSourcesSync({ db, svc, platform, config, now, log });
     const keys = createKeyStore({ config, fetchImpl, log, publicKey });
     keys.ensure().catch(() => {});
     const viewers = createViewerResolver({ keys, config });
-    const app = createApp({ config, svc, viewers, platform, sync, keys, db, log, rateLimits, fetchImpl, limitsNow });
+    const app = createApp({ config, svc, viewers, platform, sync, keys, db, log, rateLimits, fetchImpl, limitsNow, indexnow });
 
     // Search holds whatever the current rules say (idempotent: unchanged documents are not re-sent).
     try { await svc.reconcileIndex(); } catch (err) { log.warn(`[Reviews] index reconcile: ${err.message}`); }
@@ -58,7 +62,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         if (server) await new Promise((resolve) => server.close(resolve));
         if (!givenDb) await db.close();
     }
-    return { app, db, svc, sync, stores, platform, keys, viewers, server, config, stop };
+    return { app, db, svc, sync, stores, platform, keys, viewers, indexnow, server, config, stop };
 }
 
 module.exports = { start };

@@ -119,7 +119,9 @@ share is expressed as `ratingValue` 0–100 with `bestRating: 100` and the real 
 (no live signal → `unsourced`, summary under the word minimum → `thin`, unsupported points →
 `unsupported_claims`, unreviewed AI → hidden); sitemaps list indexable entities only, Atom/JSON feeds
 list published summaries, `robots.txt` and `llms.txt` are served, and Search receives
-`reviews.index_document.upserted|deleted` with Sources items as provenance.
+`reviews.index_document.upserted|deleted` with Sources items as provenance. With `INDEXNOW_KEY` set,
+publishing, editing, unpublishing or deleting an indexable entity page tells IndexNow (the key file is
+served at `/<key>.txt`; unset, nothing is sent, and drafts and noindex pages never ping).
 
 **Operations.** `/api/health`, `/api/ready` (DB required; Network key, Sources, Events relay, webhook
 secret, Community and editors reported), `/release.json`, `/metrics` (outbox and backlog gauges).
