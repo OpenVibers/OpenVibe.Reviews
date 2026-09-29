@@ -155,7 +155,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
 
     // ── Small helpers ────────────────────────────────────────
     const fail = (status, code, message, extra) => { throw new ReviewsError(status, code, message, extra); };
-    const tx = async (fn) => await db.tx(() => fn());   // ambient: plain db calls inside join it
+    const tx = async (fn) => await db.tx(async () => await fn());   // ambient: plain db calls inside join it
     const entityPath = (e) => `/e/${encodeURIComponent(e.slug)}`;
     const entityUrl = (e) => seo.canonicalUrl(origin, entityPath(e));
     const parse = (s, d) => { try { return s == null ? d : JSON.parse(s); } catch { return d; } };
