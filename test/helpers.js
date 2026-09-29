@@ -6,9 +6,6 @@
  */
 const assert = require('assert');
 const crypto = require('crypto');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const { serviceAuth, ids } = require('openvibe-contracts');
 const { signDelivery, signDeliveryHeaders } = require('openvibe-sdk/events');
 const { load } = require('../server/config');
@@ -150,11 +147,9 @@ function fakeCommunity() {
  * (default false) turns on the per-address and per-actor limits; limitsNow is the per-actor limiter's
  * clock; log is Reviews' logger (default quiet).
  */
-async function boot({ env = {}, sources = fakeSources(), community = null, dbPath, now, workers = false, rateLimits = false, limitsNow = null, log = quiet } = {}) {
-    const dir = dbPath ? path.dirname(dbPath) : fs.mkdtempSync(path.join(os.tmpdir(), 'reviews-test-'));
+async function boot({ env = {}, sources = fakeSources(), community = null, now, workers = false, rateLimits = false, limitsNow = null, log = quiet } = {}) {
     const config = load({
         NODE_ENV: 'test', PORT: '0', HOST: '127.0.0.1', BASE_URL: 'http://reviews.test',
-        REVIEWS_DB_PATH: dbPath || path.join(dir, 'reviews.db'),
         OV_NETWORK_URL: ISSUER, OV_NETWORK_INTERNAL_URL: '', REVIEWS_GATE_MIN_WORDS: '20',
         OV_SOURCES_INTERNAL_URL: 'http://sources.test', OV_COMMUNITY_INTERNAL_URL: 'http://community.test',
         REVIEWS_EDITORS: EDITOR, REVIEWS_EVENTS_SECRET: WEBHOOK_SECRET,
@@ -173,7 +168,7 @@ async function boot({ env = {}, sources = fakeSources(), community = null, dbPat
         tokens: { getToken: async () => 'stub-token', authHeaders: async () => ({ Authorization: 'Bearer stub-token' }), invalidate() {} },
     });
     const base = `http://127.0.0.1:${h.server.address().port}`;
-    return { ...h, stop: async () => { await h.stop(); await testdb.close(); }, base, dir, sources, community };
+    return { ...h, stop: async () => { await h.stop(); await testdb.close(); }, base, sources, community };
 }
 
 async function req(h, method, p, { token, body, form, headers = {}, cookie } = {}) {

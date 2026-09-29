@@ -5,7 +5,7 @@
  * interpretation and publication layer; OpenVibe.Sources owns the items, Community the discussion,
  * OpenVibe.AI only proposes drafts.
  *
- * Every write runs in one SQLite transaction together with the events it causes (transactional
+ * Every write runs in one PostgreSQL transaction together with the events it causes (transactional
  * outbox): reviews.entity.merged|split, reviews.signal.added|removed,
  * reviews.summary.published|updated|unpublished (a correction is an `updated` carrying
  * `correction`), and the Search index events reviews.index_document.upserted|deleted.

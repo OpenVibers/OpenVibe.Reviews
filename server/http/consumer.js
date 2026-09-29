@@ -8,7 +8,7 @@
  *   sources.item.removed           category reviews: the item's signal is withdrawn at once; the next
  *                                  aggregate revision no longer counts it
  *
- * Exactly once: the openvibe-sdk inbox claims (consumer, event_id) in the same SQLite transaction
+ * Exactly once: the openvibe-sdk inbox claims (consumer, event_id) in the same PostgreSQL transaction
  * as the change. The signature (X-OpenVibe-Signature, HMAC-SHA256 of the raw body with
  * REVIEWS_EVENTS_SECRET) is verified with openvibe-sdk's parseDelivery. Only events whose source
  * is `sources` are applied.

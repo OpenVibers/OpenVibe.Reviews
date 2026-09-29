@@ -4,7 +4,7 @@
   "code": true,
   "wave": "W17",
   "plan": "OpenVibe End-to-End Realignment & Implementation Plan, revision 3 (20 Sep 2026)",
-  "runtime": "node 22, express, better-sqlite3",
+  "runtime": "node 22, express, postgresql",
   "port": 4830,
   "domain": "openvibe.reviews",
   "contracts": "openvibe-contracts v0.76.0",

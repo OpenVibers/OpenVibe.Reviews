@@ -25,9 +25,6 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-# The code tree stays read-only; the database lives in /var/lib/openvibe-reviews.
-StateDirectory=openvibe-reviews
-Environment=REVIEWS_DB_PATH=/var/lib/openvibe-reviews/reviews.db
 
 [Install]
 WantedBy=multi-user.target

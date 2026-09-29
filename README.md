@@ -212,8 +212,8 @@ fnm exec --using=22.22.1 npm test         # every test/*.test.js on temp databas
 ```
 
 Production: `/opt/openvibe.reviews`, env `/etc/openvibe/reviews.env`, unit
-[deploy/systemd/openvibe-reviews.service](deploy/systemd/openvibe-reviews.service), store
-`/var/lib/openvibe-reviews/reviews.db`, nginx [deploy/nginx/openvibe.reviews.conf](deploy/nginx/openvibe.reviews.conf).
+[deploy/systemd/openvibe-reviews.service](deploy/systemd/openvibe-reviews.service), database `ov_reviews`
+on PostgreSQL (ADR-035), nginx [deploy/nginx/openvibe.reviews.conf](deploy/nginx/openvibe.reviews.conf).
 There is **no seed**: a fresh database holds no entity, signal, summary or rating. Entities are created
 by editors; signals arrive only from Sources.
 
@@ -288,10 +288,7 @@ Production deploys with `sudo ovhost deploy reviews` on the host (strategy `git-
 fast-forward `/opt/openvibe.reviews`, install on a lockfile change, restart, wait for `/api/ready`).
 The unit is `openvibe-reviews.service` on `127.0.0.1:4830`, the env file `/etc/openvibe/reviews.env`. The database is
 `ov_reviews` on the host's data role (`sudo /opt/openvibe.host/roles/data/add-service.sh reviews` writes its settings); the
-release migrates it at boot. The one-time move from SQLite is `scripts/migrate-to-postgres.js` (openvibe-sdk
-`runSqliteMigration`, with a `--pglite` rehearsal mode), run while the service is stopped; the old
-`/var/lib/openvibe-reviews/reviews.db` stays read-only for 7 days as the rollback. The store is
-`/var/lib/openvibe-reviews/reviews.db`; the nginx reference is
+release migrates it at boot (schema in [migrations/](migrations/)). The nginx reference is
 [deploy/nginx/openvibe.reviews.conf](deploy/nginx/openvibe.reviews.conf) (the domain still serves the
 OpenVibe.Sites placeholder).
 Rollback: ovhost puts the previous sha back by itself when `/api/ready` does not answer 2xx after the
@@ -308,7 +305,7 @@ following hold (plan §12.12):
 3. server-rendered public routes useful without JavaScript — **built**;
 4. real persistence and end-to-end workflows — **built** and deployed on the host (loopback only, empty database); no Sources review source is enabled yet;
 5. capability and event registration against OpenVibe.Contracts — **done** (openvibe-contracts v0.20.0);
-6. a migration/seed strategy (none: nothing to migrate, nothing seeded), a security/threat review, sitemap/robots/feed behaviour — discovery **built**; threat review **written**: [docs/threat-review.md](docs/threat-review.md) (the service authors' own, from the code: controls with file:line references, the gaps fixed in that pass and the ones that remain; an independent review is still to come);
+6. a migration/seed strategy (schema migrations in [migrations/](migrations/); nothing seeded), a security/threat review, sitemap/robots/feed behaviour — discovery **built**; threat review **written**: [docs/threat-review.md](docs/threat-review.md) (the service authors' own, from the code: controls with file:line references, the gaps fixed in that pass and the ones that remain; an independent review is still to come);
 7. acceptance tests proving the advertised functionality — **built** (`npm test`).
 
 The launch release removes `openvibe.reviews` from `OpenVibe.Sites/sites.json`, switches routing to

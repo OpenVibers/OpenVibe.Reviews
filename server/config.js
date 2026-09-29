@@ -34,8 +34,6 @@ function load(env = process.env) {
         // PostgreSQL (ADR-035): DATABASE_URL serves (PgBouncer), DATABASE_DIRECT_URL migrates (owner role).
         db: { url: env.DATABASE_URL || '', directUrl: env.DATABASE_DIRECT_URL || '' },
         valkey: { url: env.VALKEY_URL || '', prefix: env.VALKEY_PREFIX || 'ov:reviews:' },
-        // The SQLite file of releases before the switch: read once by scripts/migrate-to-postgres.js.
-        dbPath: env.REVIEWS_DB_PATH || './data/reviews.db',
 
         // Identity: OpenVibe.Network signs user JWTs (SSO) and service tokens (client credentials).
         networkUrl,

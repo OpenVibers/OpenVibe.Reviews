@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Runs every test in test/ — the files named *.test.js — each in its own process, and fails if
- * any of them fails. They use temp SQLite databases, a generated RSA key and stub upstreams; none
+ * any of them fails. They use temp PGlite databases, a generated RSA key and stub upstreams; none
  * of them needs the network or a running OpenVibe service.
  *
  *   npm test                   # everything
