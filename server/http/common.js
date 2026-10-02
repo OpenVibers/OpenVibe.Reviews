@@ -3,7 +3,7 @@
  * Shared HTTP helpers: the actor middleware, capability guards and error mapping.
  */
 const contracts = require('openvibe-contracts');
-const cache = require('openvibe-shared/cache-policy');
+const svc = require('openvibe-sdk/service');
 const { checkCapability } = require('../auth/capabilities');
 const { AuthError } = require('../auth/viewer');
 
@@ -49,25 +49,19 @@ function crossSite(req, origin) {
     return !!(o && o !== 'null' && o !== origin);
 }
 
-/** Service errors → problem+json. */
+/**
+ * Service errors → problem+json (openvibe-sdk/service, plan T1): the kit's defaults are this module's —
+ * the error's status/code/detail, `extra` spread into the body, 'internal.error'/'Internal error' at 500,
+ * 'request.invalid' otherwise, and only 5xx (apart from 503) logged, under `[Reviews]`. Kept as a named export
+ * so no call site moves.
+ */
 function sendError(res, req, err, log = console) {
-    const status = err && Number.isInteger(err.status) ? err.status : 500;
-    if (status >= 500 && status !== 503) log.error('[Reviews]', err && err.stack ? err.stack : err);
-    const code = (err && err.code) || (status === 500 ? 'internal.error' : 'request.invalid');
-    const detail = status === 500 ? 'Internal error' : (err && err.message) || undefined;
-    return http.sendProblem(res, status, code, { detail, ctx: req.ov, extra: err && err.extra ? err.extra : undefined });
+    return svc.sendError(res, req, err, log, { name: 'Reviews' });
 }
 
+/** A JSON handler: its return value is the body, answers `private, no-store`, errors through sendError. */
 function run(fn, status = 200, log = console) {
-    return async (req, res) => {
-        try {
-            const out = await fn(req, res);
-            if (res.headersSent) return;
-            res.status(typeof status === 'function' ? status(out) : status).set('Cache-Control', cache.htmlHeaders({ private: true })).json(out);
-        } catch (err) {
-            sendError(res, req, err, log);
-        }
-    };
+    return svc.run(fn, status, { name: 'Reviews', log, noStore: true });
 }
 
 module.exports = { actorMiddleware, guard, sendError, run, crossSite };
