@@ -81,7 +81,7 @@ t('every public page reads without JavaScript; sitemaps, feeds and robots follow
         } });
         const page = await req(h, 'GET', `/e/${e.slug}`);
         assert.strictEqual(robots(page.text), 'index, follow');
-        assert.strictEqual(page.headers.get('cache-control'), 'public, max-age=60');
+        assert.strictEqual(page.headers.get('cache-control'), 'public, max-age=60, stale-while-revalidate=3600');
         const text = noScripts(page.text);
         for (const needle of ['Portal 2', '50%</strong> recommend', 'Half of the sample recommends it', 'Retrieved', 'steam-reviews-portal-2', 'Computation', '/history', '/correct', 'Discussion']) assert.ok(text.includes(needle), needle);
         assert.ok(jsonLd(page.text).some((x) => x['@type'] === 'Review'));

@@ -3,6 +3,7 @@
  * Shared HTTP helpers: the actor middleware, capability guards and error mapping.
  */
 const contracts = require('openvibe-contracts');
+const cache = require('openvibe-shared/cache-policy');
 const { checkCapability } = require('../auth/capabilities');
 const { AuthError } = require('../auth/viewer');
 
@@ -62,7 +63,7 @@ function run(fn, status = 200, log = console) {
         try {
             const out = await fn(req, res);
             if (res.headersSent) return;
-            res.status(typeof status === 'function' ? status(out) : status).set('Cache-Control', 'private, no-store').json(out);
+            res.status(typeof status === 'function' ? status(out) : status).set('Cache-Control', cache.htmlHeaders({ private: true })).json(out);
         } catch (err) {
             sendError(res, req, err, log);
         }

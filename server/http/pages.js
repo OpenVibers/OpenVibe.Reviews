@@ -22,6 +22,7 @@
  */
 const express = require('express');
 const ovServe = require('openvibe-shared/serve');
+const cache = require('openvibe-shared/cache-policy');
 const frame = require('openvibe-shared/frame');
 const seo = require('openvibe-publishing/seo');
 const { renderPage } = require('../render/layout');
@@ -93,7 +94,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
     // Cross-site form posts are refused (the session cookie is SameSite=Lax as well).
     router.use((req, res, next) => {
         if (req.method !== 'POST' || !crossSite(req, origin)) return next();
-        res.status(403).type('text/plain').set('Cache-Control', 'private, no-store').send('Cross-site form posts are not accepted.');
+        res.status(403).type('text/plain').set('Cache-Control', cache.htmlHeaders({ private: true })).send('Cross-site form posts are not accepted.');
     });
 
     // Per-actor limits (http/actor-limits.js): each form names its budget, shared with the API route
@@ -102,7 +103,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
 
     const send = (req, res, status, body, o = {}) => {
         const cacheable = o.cache === 'public' && req.actor.kind === 'anonymous' && status === 200;
-        res.status(status).set('Cache-Control', cacheable ? 'public, max-age=60' : 'private, no-store').set('Vary', 'Cookie, Authorization').type('html')
+        res.status(status).set('Cache-Control', cacheable ? cache.htmlHeaders({ maxAge: 60 }) : cache.htmlHeaders({ private: true })).set('Vary', 'Cookie, Authorization').type('html')
             .send(renderPage({ config, actor: req.actor, path: o.path || req.path, editor: svc.access.isEditor(req.actor), ...o, body }));
     };
     const errorPage = (req, res, status, title, message) => send(req, res, status, views.errorBody({ status, title, message }), { title, robots: 'noindex, nofollow' });
@@ -127,7 +128,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
         const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
         if (!e) {
             const r = await svc.resolveRedirect(`/e/${slug}`);
-            if (r && r.status === 301) { res.set('Cache-Control', 'public, max-age=300').redirect(301, r.location + suffix + query); return null; }
+            if (r && r.status === 301) { res.set('Cache-Control', cache.htmlHeaders({ maxAge: 300 })).redirect(301, r.location + suffix + query); return null; }
             if (r && r.status === 410) { gone(req, res); return null; }
             notFound(req, res);
             return null;
@@ -135,7 +136,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
         if (e.state === 'deleted') { gone(req, res); return null; }
         if (e.state === 'merged') {
             const c = await svc.entityById(await svc.canonicalOf(e.id));
-            res.set('Cache-Control', 'public, max-age=60').redirect(301, `${svc.entityPath(c)}${suffix}${query}`);
+            res.set('Cache-Control', cache.htmlHeaders({ maxAge: 60 })).redirect(301, `${svc.entityPath(c)}${suffix}${query}`);
             return null;
         }
         return e;
@@ -161,7 +162,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
         const e = await locate(req, res, '.json');
         if (!e) return;
         const p = await svc.page(e, req.actor);
-        res.status(200).set('Cache-Control', req.actor.kind === 'anonymous' ? 'public, max-age=60' : 'private, no-store').set('Vary', 'Cookie, Authorization').set('X-Robots-Tag', p.decision.robots)
+        res.status(200).set('Cache-Control', req.actor.kind === 'anonymous' ? cache.htmlHeaders({ maxAge: 60 }) : cache.htmlHeaders({ private: true })).set('Vary', 'Cookie, Authorization').set('X-Robots-Tag', p.decision.robots)
             .json({ ...p, decision: { indexable: p.decision.indexable, robots: p.decision.robots, reasons: p.decision.codes } });
     });
 
