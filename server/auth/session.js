@@ -15,6 +15,7 @@
  */
 const crypto = require('crypto');
 const express = require('express');
+const cache = require('openvibe-shared/cache-policy');
 
 const ACCESS_COOKIE = 'ov_token';
 const REFRESH_COOKIE = 'ov_refresh';
@@ -180,7 +181,7 @@ function createSessionRoutes({ config, viewers, fetchImpl = globalThis.fetch, lo
     router.get('/me', async (req, res) => {
         const actor = await viewers.resolve(req, { services: false }).catch(() => null);
         if (!actor || actor.kind !== 'user') return res.status(401).json({ error: 'Not authenticated' });
-        res.set('Cache-Control', 'private, no-store').json({ user: actor.user });
+        res.set('Cache-Control', cache.htmlHeaders({ private: true })).json({ user: actor.user });
     });
 
     router.post('/refresh', async (req, res) => {

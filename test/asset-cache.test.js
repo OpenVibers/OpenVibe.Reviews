@@ -16,9 +16,12 @@ const { assetVersion } = require('../server/render/layout');
         assert.strictEqual(r.headers.get('cache-control'), 'public, max-age=31536000, immutable', 'the current hash is immutable');
         r = await fetch(`${h.base}/css/reviews.css?v=0123456789`);
         assert.strictEqual(r.status, 200);
-        assert.strictEqual(r.headers.get('cache-control'), 'public, max-age=300', 'another ?v= is never pinned');
+        assert.strictEqual(r.headers.get('cache-control'), 'public, max-age=300, stale-while-revalidate=86400', 'another ?v= is never pinned');
+        r = await fetch(`${h.base}/css/reviews.css?v=deadbeefdeadbeef`);
+        assert.strictEqual(r.status, 200);
+        assert.strictEqual(r.headers.get('cache-control'), 'public, max-age=300, stale-while-revalidate=86400', 'a hex but wrong ?v= is not immutable');
         r = await fetch(`${h.base}/css/reviews.css`);
-        assert.strictEqual(r.headers.get('cache-control'), 'public, max-age=300');
+        assert.strictEqual(r.headers.get('cache-control'), 'public, max-age=300, stale-while-revalidate=86400');
         console.log('asset cache: all checks passed');
     } finally { await h.stop(); }
 })().catch((e) => { console.error(e); process.exit(1); });
