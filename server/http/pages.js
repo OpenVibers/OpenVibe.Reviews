@@ -183,13 +183,10 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
         if (!e) return;
         const p = await svc.page(e, req.actor);
         const discussion = await discussionFor(e, req.actor);
-        const head = seo.metaTags({
-            decision: p.decision, title: `${e.name} · OpenVibe.Reviews`, siteName: 'OpenVibe.Reviews', type: 'website',
+        send(req, res, 200, views.entityPage(p, { discussion, actor: req.actor, flash: req.query.saved ? 'Saved.' : null }), {
+            decision: p.decision, title: e.name, cache: discussion.state === 'ok' ? null : 'public', path: svc.entityPath(e),
             description: e.description || `${e.name}: review signals from ${p.sources.length ? p.sources.map((s) => s.name || s.key).join(', ') : 'no source yet'}, with provenance.`,
             canonical: p.entity.url, jsonLd: structuredData(p, config),
-        });
-        send(req, res, 200, views.entityPage(p, { discussion, actor: req.actor, flash: req.query.saved ? 'Saved.' : null }), {
-            head, title: e.name, cache: discussion.state === 'ok' ? null : 'public', path: svc.entityPath(e),
         });
     }));
 
