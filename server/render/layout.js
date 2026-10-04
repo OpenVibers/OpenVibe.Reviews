@@ -16,6 +16,7 @@ const { escapeHtml: esc } = require('openvibe-publishing/ssr');
 
 const SITE_NAME = 'OpenVibe.Reviews';
 const NETWORK_URL = 'https://openvibe.network';
+const SITE_SUMMARY = 'Review signals from named sources (via OpenVibe.Sources) resolved to entities, with provenance for every number, aggregates that exist only when signals do, and editor-reviewed summaries.';
 const DEFAULT_DESCRIPTION = 'OpenVibe.Reviews: review signals gathered from named sources, with provenance for every number and no rating without source data. Part of the OpenVibe network.';
 const PUBLIC_DIR = path.join(__dirname, '..', '..', 'public');
 
@@ -78,6 +79,9 @@ function renderPage(o) {
         lang: 'en',
         title,
         description: o.description || DEFAULT_DESCRIPTION,
+        // The one-line AI summary: on the home page it becomes the ai-summary meta and the WebPage
+        // JSON-LD (openvibe-publishing 1.3.0 forwards it to the shell). Other pages leave it out.
+        summary: o.summary,
         canonical: o.canonical || `${config.baseUrl}${o.path || '/'}`,
         decision: o.decision,
         robots: o.robots,
@@ -99,4 +103,4 @@ function renderPage(o) {
     });
 }
 
-module.exports = { renderPage, asset, assetVersion, setRelease, SITE_NAME, DEFAULT_DESCRIPTION, NETWORK_URL };
+module.exports = { renderPage, asset, assetVersion, setRelease, SITE_NAME, SITE_SUMMARY, DEFAULT_DESCRIPTION, NETWORK_URL };
