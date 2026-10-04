@@ -9,9 +9,9 @@
   "domain": "openvibe.reviews",
   "contracts": "openvibe-contracts v0.76.0",
   "packages": [
-    "openvibe-publishing v1.0.0",
-    "openvibe-shared v2.2.0",
-    "openvibe-sdk v0.20.0"
+    "openvibe-publishing v1.1.0",
+    "openvibe-shared v2.5.0",
+    "openvibe-sdk v0.26.0"
   ],
   "capabilities": [
     "reviews.entity.resolve",
