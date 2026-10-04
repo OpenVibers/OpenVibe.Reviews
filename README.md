@@ -115,7 +115,7 @@ Old slugs 301, merged entities 301, deleted ones 410.
 `AggregateRating`, and a `Review` for a summary, are emitted **only when the aggregate exists** (i.e.
 real signals back it); without signals the page carries breadcrumbs only (tested). A recommendation
 share is expressed as `ratingValue` 0–100 with `bestRating: 100` and the real count; a summary's
-`Review` never has a `reviewRating`. The openvibe-publishing v1.1.0 gate decides robots per entity
+`Review` never has a `reviewRating`. The openvibe-publishing v1.2.0 gate decides robots per entity
 (no live signal → `unsourced`, summary under the word minimum → `thin`, unsupported points →
 `unsupported_claims`, unreviewed AI → hidden); sitemaps list indexable entities only, Atom/JSON feeds
 list published summaries, `robots.txt` and `llms.txt` are served, and Search receives
@@ -228,7 +228,7 @@ by editors; signals arrive only from Sources.
 - OpenVibe.AI — optional, proposes summaries through `reviews.summary.propose`
 - OpenVibe.Search — consumes the index events
 - PostgreSQL 18 and Valkey 9 (OpenVibe.Host `roles/data/`, ADR-035): every read and write is async through `openvibe-sdk/db`; Valkey holds the per-actor limit counters (optional)
-- packages: openvibe-publishing v1.1.0, openvibe-contracts v0.76.0, openvibe-shared v2.5.0, openvibe-sdk v0.26.0
+- packages: openvibe-publishing v1.2.0, openvibe-contracts v0.76.0, openvibe-shared v2.6.0, openvibe-sdk v0.26.0
 
 ## Capabilities
 
