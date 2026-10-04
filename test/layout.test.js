@@ -82,7 +82,9 @@ t('the document head and frame come from openvibe-publishing/layout, robots exac
         const home = (await req(h, 'GET', '/')).text;
         const homeHead = home.slice(0, home.indexOf('</head>'));
         assert.ok(homeHead.includes('<meta name="robots" content="index, follow">'));
-        assert.strictEqual(count(homeHead, /<script type="application\/ld\+json">/g), 1, 'the home page JSON-LD');
+        // The home carries its own WebPage JSON-LD and, since llms-full.txt, the site summary's WebPage JSON-LD.
+        assert.strictEqual(count(homeHead, /<script type="application\/ld\+json">/g), 2, 'the home page JSON-LD');
+        assert.match(homeHead, /<meta name="ai-summary" content="[^"]+">/, 'the AI summary head');
         assert.ok(home.includes('Recently shipped on OpenVibe.Reviews'), 'the shipped line stays on the home page');
     } finally { await h.stop(); }
 });

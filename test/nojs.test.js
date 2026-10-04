@@ -118,6 +118,36 @@ t('every public page reads without JavaScript; sitemaps, feeds and robots follow
     } finally { await h.stop(); }
 });
 
+t('/llms-full.txt carries only indexable reviews and the home page an AI summary', async () => {
+    const h = await boot();
+    try {
+        const e = await createEntity(h, { name: 'Portal 2', kind: 'game', aliases: [{ type: 'source', value: 'steam-reviews-portal-2' }] });
+        await importItem(h, steamItem({ votedUp: true }));
+        const thin = await createEntity(h, { name: 'Thin Widget', kind: 'product' });
+        const sig = await h.db.prepare('SELECT id FROM review_signals').all();
+        const pub = await req(h, 'POST', `/api/v1/entities/${e.slug}/summary/revisions`, { token: editorToken(), body: {
+            overview: 'One recent review recommends it, which is the whole sample Reviews has read so far and says nothing about the game beyond that.',
+            overview_signals: sig.map((s) => s.id),
+            publish: true,
+        } });
+        assert.strictEqual(pub.status, 201, pub.text.slice(0, 300));
+
+        const full = await req(h, 'GET', '/llms-full.txt');
+        assert.strictEqual(full.status, 200);
+        assert.match(full.headers.get('content-type'), /^text\/plain/);
+        assert.strictEqual(full.headers.get('cache-control'), 'public, max-age=3600, stale-while-revalidate=3600');
+        assert.ok(full.text.includes('OpenVibe.Reviews'), 'the llms.txt header');
+        assert.ok(full.text.includes(`http://reviews.test/e/${e.slug}`), 'an indexable review is listed');
+        assert.match(full.text, /One recent review recommends it/, 'its short summary is the text');
+        assert.ok(!full.text.includes(`/e/${thin.slug}`), 'a thin, non-indexable review is never listed');
+        assert.ok(Buffer.byteLength(full.text) <= 512 * 1024, 'stays within maxBytes');
+
+        const home = await req(h, 'GET', '/');
+        assert.match(home.text, /<meta name="ai-summary" content="Review signals from named sources/);
+        assert.match(home.text, /"@type":"WebPage"/, 'the home WebPage JSON-LD');
+    } finally { await h.stop(); }
+});
+
 t('editors work with plain forms: create, resolve an ambiguous item, summarise, merge, split, correct', async () => {
     const h = await boot();
     try {

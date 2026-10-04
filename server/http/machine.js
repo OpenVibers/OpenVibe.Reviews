@@ -8,13 +8,16 @@
  *   /feed.atom           published summaries (Atom), /feed.json (JSON Feed 1.1); one entry per published
  *                        revision, so a correction is a new entry that starts with its note
  *   /llms.txt            orientation for language models
+ *   /llms-full.txt       the same header plus a short summary of every indexable review page
  */
 const express = require('express');
 const seo = require('openvibe-publishing/seo');
 const sharedSeo = require('openvibe-shared/seo');
 const cache = require('openvibe-shared/cache-policy');
+const { SITE_SUMMARY } = require('../render/layout');
 
 const PER_SITEMAP = 45000;
+const ALL_SUMMARIES = 50000;
 
 function createMachine({ svc, config }) {
     const router = express.Router();
@@ -76,7 +79,7 @@ function createMachine({ svc, config }) {
     router.get('/llms.txt', (_req, res) => {
         setCache(res, 3600).type('text/plain').send(sharedSeo.llmsTxt({
             name: 'OpenVibe.Reviews',
-            summary: 'Review signals from named sources (via OpenVibe.Sources) resolved to entities, with provenance for every number, aggregates that exist only when signals do, and editor-reviewed summaries.',
+            summary: SITE_SUMMARY,
             details: 'Every entity page has a JSON representation at the same address plus ".json" (same content). Each signal names its source item, retrieval time and licence note; the aggregate lists its inputs, exclusions and computation (method reviews-aggregate@1). Summaries never carry a rating; AI-drafted summaries are labelled and published only after a person approves them. Review text is not republished.',
             sections: [
                 { title: 'Start here', links: [{ title: 'Entities', url: `${origin}/` }, { title: 'How it works', url: `${origin}/about` }] },
@@ -86,6 +89,23 @@ function createMachine({ svc, config }) {
                     { title: 'Published summaries (JSON Feed)', url: `${origin}/feed.json` },
                 ] },
             ],
+        }));
+    });
+
+    router.get('/llms-full.txt', async (_req, res) => {
+        // The /llms.txt header plus a section of only indexable reviews — the same gate the sitemap
+        // applies — each as its short summary. Review text is never stored, so no body can appear.
+        const pages = (await svc.recentSummaries(ALL_SUMMARIES)).filter(({ decision }) => decision.indexable).map(({ entity, rev }) => ({
+            title: entity.name,
+            url: svc.entityUrl(entity),
+            text: [rev.content || '', ...(rev.fields.pros || []).map((p) => p.text), ...(rev.fields.cons || []).map((p) => p.text)].join('\n').slice(0, 1000),
+        }));
+        setCache(res, 3600).type('text/plain').send(sharedSeo.llmsFull({
+            site: 'OpenVibe.Reviews',
+            summary: SITE_SUMMARY,
+            base: origin,
+            maxBytes: 512 * 1024,
+            sections: [{ title: 'Reviews', pages }],
         }));
     });
 
