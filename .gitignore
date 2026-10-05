@@ -6,3 +6,4 @@ data/
 *.log
 *.pem
 *.key
+node_modules
