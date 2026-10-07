@@ -8,6 +8,7 @@
  * else, and no star glyphs: values are printed as the source stated them.
  */
 const ssr = require('openvibe-publishing/ssr');
+const showcase = require('openvibe-shared/showcase');
 
 const { html, raw } = ssr;
 const t = (v) => raw(ssr.timeTag(v));
@@ -71,14 +72,30 @@ function aggregateLine(agg) {
     return html`${parts.join(' · ')}`;
 }
 
+/** The front page opens with what OpenVibe.Reviews is for (openvibe-shared/showcase), then the entities. */
+function reviewsShowcase() {
+    return showcase.hero({
+        eyebrow: 'OpenVibe.Reviews',
+        title: 'Review scores you can', accent: 'trace',
+        lede: 'Ratings and recommendations gathered from named sources. Every number shows where it came from and when it was read, and when no source has said anything there is no score at all.',
+        actions: [{ label: 'Browse what is reviewed', href: '#entities', primary: true }, { label: 'How it works', href: '/about' }],
+    }) + showcase.features({
+        title: 'What every page shows',
+        items: [
+            { icon: 'ov:search', title: 'Where each number came from', text: 'Every signal keeps its source, the item it came from, and when it was read.' },
+            { icon: 'ov:check', title: 'An aggregate you can check', text: 'The inputs and the method are listed. An editor can leave a source out only with the reason shown.' },
+            { icon: 'ov:history', title: 'Changes on the record', text: 'Replaced and withdrawn signals stay in the history, beside every revision of the aggregate.' },
+            { icon: 'ov:docs', title: 'Summaries by people', text: 'Written or approved by an editor, citing the signals they rest on, and never carrying a rating.' },
+        ],
+    });
+}
+
 function home({ entities, total, editor }) {
-    return html`<section class="rv-intro"><h1>OpenVibe.Reviews</h1>
-<p>Review signals gathered from named sources. Every number on an entity page shows where it came from and when it was read, the aggregate lists its inputs and how it was computed, and there is no aggregate at all when no source has stated anything. Summaries are written or checked by a person; AI drafts are never published on their own and never produce a rating.</p>
-<p><a href="/about">How it works</a>${editor ? html` · <a href="/editor">Editor desk</a>` : ''}</p></section>
-<section><h2>Entities with source data</h2>
+    return html`${raw(reviewsShowcase())}
+<section id="entities"><h2>Entities with source data</h2>
 ${entities.length ? html`<ul class="rv-entities">${entities.map((x) => html`<li><a href="${epath(x.entity)}"><strong>${x.entity.name}</strong></a> <span class="rv-tag">${KIND_LABEL[x.entity.kind]}</span><br><span class="rv-muted">${aggregateLine(x.aggregate)}</span></li>`)}</ul>`
         : html`<p class="rv-muted">Nothing yet. Entities appear here once a source has stated something about them (or an editor has published a summary).</p>`}
-<p class="rv-muted">${n(total)} entit${total === 1 ? 'y' : 'ies'} in total. <a href="/feed.atom">Atom</a> · <a href="/feed.json">JSON Feed</a></p></section>`;
+<p class="rv-muted">${n(total)} entit${total === 1 ? 'y' : 'ies'} in total. <a href="/feed.atom">Atom</a> · <a href="/feed.json">JSON Feed</a>${editor ? html` · <a href="/editor">Editor desk</a>` : ''}</p></section>`;
 }
 
 function aboutPage() {
