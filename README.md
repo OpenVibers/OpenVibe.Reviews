@@ -156,7 +156,7 @@ A write carried by the `ov_token` cookie that another site started is 403 `reque
 | `reviews.summary.publish` | `POST /entities/:ref/summary/revisions` (`correction_note`, `correction_id`: a correction, published at once), `…/revisions/:n/review`, `…/summary/publish`, `…/summary/unpublish` |
 | `reviews.correction.submit` | `POST /entities/:ref/corrections` |
 
-The ids and the service manifest are released in openvibe-contracts (pinned at v0.96.0; the source
+The ids and the service manifest are released in openvibe-contracts (pinned at v0.107.0; the source
 proposals stay in [docs/capabilities-proposal/](docs/capabilities-proposal/) and
 [docs/service-manifest-proposal.json](docs/service-manifest-proposal.json)); `server/auth/capabilities.js`
 decides them with the contracts grant rule. `reviews.entity.manage` and
@@ -228,7 +228,7 @@ by editors; signals arrive only from Sources.
 - OpenVibe.AI — optional, proposes summaries through `reviews.summary.propose`
 - OpenVibe.Search — consumes the index events
 - PostgreSQL 18 and Valkey 9 (OpenVibe.Host `roles/data/`, ADR-035): every read and write is async through `openvibe-sdk/db`; Valkey holds the per-actor limit counters (optional)
-- packages: openvibe-publishing v1.3.0, openvibe-contracts v0.96.0, openvibe-shared v2.10.1, openvibe-sdk v0.26.0
+- packages: openvibe-publishing v1.3.0, openvibe-contracts v0.107.0, openvibe-shared v2.11.0, openvibe-sdk v0.34.0
 
 ## Capabilities
 
@@ -306,7 +306,7 @@ following hold (plan §12.12):
 2. canonical identity/auth integration (Network subjects, a scoped service principal) — **built** and provisioned in production;
 3. server-rendered public routes useful without JavaScript — **built**;
 4. real persistence and end-to-end workflows — **built** and deployed on the host (loopback only, empty database); no Sources review source is enabled yet;
-5. capability and event registration against OpenVibe.Contracts — **done** (openvibe-contracts v0.96.0);
+5. capability and event registration against OpenVibe.Contracts — **done** (openvibe-contracts v0.107.0);
 6. a migration/seed strategy (schema migrations in [migrations/](migrations/); nothing seeded), a security/threat review, sitemap/robots/feed behaviour — discovery **built**; threat review **written**: [docs/threat-review.md](docs/threat-review.md) (the service authors' own, from the code: controls with file:line references, the gaps fixed in that pass and the ones that remain; an independent review is still to come);
 7. acceptance tests proving the advertised functionality — **built** (`npm test`).
 
