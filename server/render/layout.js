@@ -95,6 +95,7 @@ function renderPage(o) {
         navLinks: LINKS.map((l) => ({ label: l.label, href: l.href })),
         home: '/',
         css: asset('css/reviews.css'),
+        styles: o.styles,   // openvibe-shared stylesheet names (the home page's showcase.css)
         release: RELEASE,
         mainClass: 'rv-main',
         header: `<header class="rv-bar"><a class="rv-brand" href="/">${SITE_NAME}</a><form class="rv-search" action="/search" method="get" role="search"><label for="rv-q" class="rv-sr">Search entities</label><input id="rv-q" name="q" type="search" placeholder="Search entities" value="${esc(o.query || '')}"><button type="submit">Search</button></form><noscript><span class="rv-account">${who}</span></noscript></header>`,

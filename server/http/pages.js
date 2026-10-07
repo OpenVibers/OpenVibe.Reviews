@@ -1,4 +1,5 @@
 'use strict';
+const showcase = require('openvibe-shared/showcase');
 /**
  * Server-rendered pages. Everything a reader or an editor does works with plain links and HTML
  * form posts; the shared navbar is progressive enhancement.
@@ -146,7 +147,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
     router.get('/', async (req, res) => {
         const all = await svc.listEntities({ limit: 1 });
         send(req, res, 200, views.home({ entities: await svc.entitiesWithData(60), total: all.total, editor: isEditor(req) }), {
-            robots: 'index, follow', cache: 'public', active: 'home', path: '/', summary: SITE_SUMMARY,
+            robots: 'index, follow', cache: 'public', active: 'home', path: '/', summary: SITE_SUMMARY, styles: [showcase.STYLESHEET],
             jsonLd: seo.structuredData.webPage({ url: `${config.baseUrl}/`, name: 'OpenVibe.Reviews', description: 'Review signals from named sources, with provenance and honest aggregates.' }),
         });
     });
