@@ -7,7 +7,9 @@
   "runtime": "node 22, express, postgresql",
   "port": 4830,
   "domain": "openvibe.reviews",
-  "contracts": "openvibe-contracts v0.107.0",
+  "contracts": "openvibe-contracts v0.112.0",
+  "sdk": "openvibe-sdk v0.35.0",
+  "shared": "openvibe-shared v2.13.0",
   "packages": [
     "openvibe-publishing v1.3.0",
     "openvibe-shared v2.13.0",
@@ -29,7 +31,6 @@
   "onOpenVibeSites": true,
   "seed": "none: no entities, signals, summaries or ratings are seeded",
   "dataSource": "OpenVibe.Sources category reviews; no review source is enabled there yet (all 6 Sources seeds are disabled)",
-  "updated": "2026-10-07",
   "features": [
     "signals from OpenVibe.Sources by cursor pull and signed webhook, with provenance",
     "deterministic entity resolution; a name alone never resolves",
@@ -43,5 +44,6 @@
     "/api/v1 by capability",
     "SDK outbox events and Search index documents",
     "per-actor limits (openvibe-sdk/limits)"
-  ]
+  ],
+  "updated": "2026-10-07"
 }
