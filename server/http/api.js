@@ -76,7 +76,7 @@ function createApi({ svc, viewers, sources, sync, config, log = console, limits 
     router.get('/entities', guard('reviews.entity.resolve'), R(async (req) => {
         const text = String(req.query.q || '').trim();
         if (text) return { entities: (await Promise.all((await svc.search(text, { limit: Number(req.query.limit) || 30 })).map(svc.entityView))) };
-        const out = await svc.listEntities({ limit: Number(req.query.limit) || 50, offset: Number(req.query.offset) || 0 });
+        const out = await svc.listEntities({ limit: Number(req.query.limit) || 50, offset: Math.min(Number(req.query.offset) || 0, 100000) });
         return { entities: (await Promise.all(out.entities.map(svc.entityView))), total: out.total };
     }));
     // A lookup, not a write: counted like a read, in the same budget.
