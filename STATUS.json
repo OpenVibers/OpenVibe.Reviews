@@ -27,8 +27,8 @@
   ],
   "capabilitiesRegistered": true,
   "deployed": true,
-  "deployment": "Deployed with `sudo ovhost deploy reviews`: unit openvibe-reviews, 127.0.0.1:4830 loopback only; Events subscription sources.item.* in place; on 2026-09-23 /api/ready answered 200 and the production database held 0 entities and 0 signals. Deployed internally, not launched: openvibe.reviews still serves the OpenVibe.Sites placeholder until a person verifies a review source's terms and enables it in Sources, and an editor publishes (REVIEWS_EDITORS holds the owner only)",
-  "onOpenVibeSites": true,
+  "deployment": "Deployed with `sudo ovhost deploy reviews`: unit openvibe-reviews, 127.0.0.1:4830 behind nginx; Events subscription sources.item.* in place; on 2026-09-23 /api/ready answered 200 and the production database held 0 entities and 0 signals. Public at openvibe.reviews since 2026-10-09 after an independent pre-launch security review whose fixes shipped first; the database stays empty until a person verifies a review source's terms and enables it in Sources, and an editor publishes (REVIEWS_EDITORS holds the owner only)",
+  "onOpenVibeSites": false,
   "seed": "none: no entities, signals, summaries or ratings are seeded",
   "dataSource": "OpenVibe.Sources category reviews; no review source is enabled there yet (all 6 Sources seeds are disabled)",
   "features": [
