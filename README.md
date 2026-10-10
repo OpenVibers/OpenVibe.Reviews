@@ -228,7 +228,7 @@ by editors; signals arrive only from Sources.
 - OpenVibe.AI — optional, proposes summaries through `reviews.summary.propose`
 - OpenVibe.Search — consumes the index events
 - PostgreSQL 18 and Valkey 9 (OpenVibe.Host `roles/data/`, ADR-035): every read and write is async through `openvibe-sdk/db`; Valkey holds the per-actor limit counters (optional)
-- packages: openvibe-publishing v1.3.0, openvibe-contracts v0.107.0, openvibe-shared v3.0.0, openvibe-sdk v0.38.0
+- packages: openvibe-publishing v1.3.0, openvibe-contracts v0.107.0, openvibe-shared v3.0.1, openvibe-sdk v0.38.0
 
 ## Capabilities
 
@@ -322,6 +322,6 @@ Part of the [OpenVibe network](https://openvibe.network). Built in the open by [
 <!-- versions:start -->
 - openvibe-contracts: v0.129.0
 - openvibe-sdk: v0.38.0
-- openvibe-shared: v3.0.0
+- openvibe-shared: v3.0.1
 - openvibe-publishing: v1.3.0
 <!-- versions:end -->
