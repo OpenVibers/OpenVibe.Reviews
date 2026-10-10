@@ -2,7 +2,7 @@
 
 > Review signals gathered across sources with provenance, entity resolution and honest aggregates.
 
-**Status:** alpha (roadmap Wave 17, Reviews half). Tested against stub upstreams and **deployed internally, not launched**: it runs on the production host on 127.0.0.1:4830 only (`/api/ready` 200 on 2026-09-23) with an empty database (0 entities, 0 signals), and `openvibe.reviews` still shows its placeholder on OpenVibe.Sites.
+**Status:** alpha (roadmap Wave 17, Reviews half). Tested against stub upstreams and **public at `openvibe.reviews` since 2026-10-09**, after an independent pre-launch security review whose fixes shipped first. The database holds nothing yet (0 entities, 0 signals): the first entities come from editors, signals only from Sources, and no Sources review source is enabled.
 **Domain:** `openvibe.reviews` · **Port:** 4830 · **Service id:** `reviews`
 **Plan:** OpenVibe End-to-End Realignment & Implementation Plan, revision 3 — roadmap Wave 17, §15.13, §29, §32.
 **License:** AGPL-3.0 (same as every OpenVibe service).
@@ -291,29 +291,29 @@ fast-forward `/opt/openvibe.reviews`, install on a lockfile change, restart, wai
 The unit is `openvibe-reviews.service` on `127.0.0.1:4830`, the env file `/etc/openvibe/reviews.env`. The database is
 `ov_reviews` on the host's data role (`sudo /opt/openvibe.host/roles/data/add-service.sh reviews` writes its settings); the
 release migrates it at boot (schema in [migrations/](migrations/)). The nginx reference is
-[deploy/nginx/openvibe.reviews.conf](deploy/nginx/openvibe.reviews.conf) (the domain still serves the
-OpenVibe.Sites placeholder).
+[deploy/nginx/openvibe.reviews.conf](deploy/nginx/openvibe.reviews.conf) (the domain has served this
+service since 2026-10-09).
 Rollback: ovhost puts the previous sha back by itself when `/api/ready` does not answer 2xx after the
 restart; afterwards `sudo ovhost rollback reviews --to <sha>`. Migrations only add tables and columns.
 
 ## Launch rule
 
-This repository does not make the product real on its own. `openvibe.reviews` keeps its placeholder
-page on [OpenVibers/OpenVibe.Sites](https://github.com/OpenVibers/OpenVibe.Sites) until all of the
-following hold (plan §12.12):
+This repository never made the product real on its own: `openvibe.reviews` kept its placeholder page
+on [OpenVibers/OpenVibe.Sites](https://github.com/OpenVibers/OpenVibe.Sites) until all of the
+following held (plan §12.12):
 
 1. an owning runtime with health/readiness endpoints and observability — **built** (`/api/health`, `/api/ready`, `/metrics`);
 2. canonical identity/auth integration (Network subjects, a scoped service principal) — **built** and provisioned in production;
 3. server-rendered public routes useful without JavaScript — **built**;
-4. real persistence and end-to-end workflows — **built** and deployed on the host (loopback only, empty database); no Sources review source is enabled yet;
+4. real persistence and end-to-end workflows — **built** and deployed on the host (empty database); no Sources review source is enabled yet;
 5. capability and event registration against OpenVibe.Contracts — **done** (openvibe-contracts v0.107.0);
-6. a migration/seed strategy (schema migrations in [migrations/](migrations/); nothing seeded), a security/threat review, sitemap/robots/feed behaviour — discovery **built**; threat review **written**: [docs/threat-review.md](docs/threat-review.md) (the service authors' own, from the code: controls with file:line references, the gaps fixed in that pass and the ones that remain; an independent review is still to come);
+6. a migration/seed strategy (schema migrations in [migrations/](migrations/); nothing seeded), a security/threat review, sitemap/robots/feed behaviour — discovery **built**; threat review **written**: [docs/threat-review.md](docs/threat-review.md) (the service authors' own, from the code: controls with file:line references, the gaps fixed in that pass and the ones that remain); an independent pre-launch security review followed, its fixes shipped first;
 7. acceptance tests proving the advertised functionality — **built** (`npm test`).
 
-The launch release removes `openvibe.reviews` from `OpenVibe.Sites/sites.json`, switches routing to
-this service and registers its maturity in the ecosystem registry **in the same release it goes live**.
-A placeholder is never counted as an implemented service, and this README does not call the product
-live until that release has happened.
+The launch release removed `openvibe.reviews` from `OpenVibe.Sites/sites.json`, switched routing to
+this service and registered its maturity in the ecosystem registry in the same release it went live:
+the domain has served this service since 2026-10-09, when plan T11 deleted OpenVibe.Sites. A
+placeholder is never counted as an implemented service.
 
 ---
 
