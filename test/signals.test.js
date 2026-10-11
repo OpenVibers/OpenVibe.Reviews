@@ -60,6 +60,46 @@ t('items without an entity wait unmatched; a source binding settles them; every 
     } finally { await h.stop(); }
 });
 
+t('a source whose subject an editor declares settles its waiting items into a public aggregate', async () => {
+    const h = await boot();
+    try {
+        h.sources.addSource({ key: 'steam-reviews-portal-2', name: 'Steam user review signals: Portal 2 (app 620)', homepage_url: 'https://store.steampowered.com/app/620/', category: 'reviews' });
+        // The production state: the source's items are kept, no entity is bound to the source yet, so
+        // every item waits unmatched, no signal exists and the public site lists nothing reviewed.
+        for (const votedUp of [true, true, false]) await importItem(h, steamItem({ votedUp }));
+        const n = async (sql) => (await h.db.prepare(sql).get()).n;
+        assert.strictEqual(await n('SELECT COUNT(*) AS n FROM review_entities'), 0);
+        assert.strictEqual(await n('SELECT COUNT(*) AS n FROM review_signals'), 0);
+        assert.strictEqual(await n("SELECT COUNT(*) AS n FROM review_source_items WHERE resolution = 'unmatched'"), 3);
+        assert.ok(!/Portal 2/.test((await req(h, 'GET', '/')).text), 'the home page lists nothing reviewed');
+        assert.strictEqual((await req(h, 'GET', '/e/portal-2.json')).status, 404);
+
+        // What the docs require an editor (a person, not an agent) to do: create the entity and declare
+        // the source's subject with a source binding — every item of that source is about this entity.
+        const e = await createEntity(h, { name: 'Portal 2', kind: 'game', aliases: [{ type: 'source', value: 'steam-reviews-portal-2' }] });
+
+        // The declaration settles the waiting backlog in the same transaction: each item resolves by the
+        // source rule and its signal is created.
+        const rows = await h.db.prepare('SELECT resolution, resolution_rule, entity_id FROM review_source_items').all();
+        assert.strictEqual(rows.length, 3);
+        for (const r of rows) {
+            assert.strictEqual(r.resolution, 'resolved');
+            assert.strictEqual(r.resolution_rule, 'source');
+            assert.strictEqual(r.entity_id, e.id);
+        }
+        assert.strictEqual(await n("SELECT COUNT(*) AS n FROM review_signals WHERE status = 'active'"), 3);
+
+        // The public read API returns the entity with its signals and aggregate.
+        const page = await req(h, 'GET', '/e/portal-2.json');
+        assert.strictEqual(page.status, 200, page.text);
+        assert.strictEqual(page.json.entity.name, 'Portal 2');
+        assert.strictEqual(page.json.signals.length, 3);
+        assert.strictEqual(page.json.aggregate.result.components.recommendation.positive, 2);
+        assert.strictEqual(page.json.aggregate.result.components.recommendation.total, 3);
+        assert.ok(/Portal 2/.test((await req(h, 'GET', '/')).text), 'the home page lists it now');
+    } finally { await h.stop(); }
+});
+
 t('an entity without signals has no aggregate (null, not 0) and no aggregate row', async () => {
     const h = await boot();
     try {
