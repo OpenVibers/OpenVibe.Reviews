@@ -44,7 +44,7 @@ function createEvents({ db, svc, sync, config, log = console }) {
             return http.sendProblem(res, 500, 'reviews.event_failed', { detail: 'processing failed; it will be retried', ctx: req.ov });
         }
         if (out.status === 401) return http.sendProblem(res, 401, 'reviews.bad_signature', { detail: 'X-OpenVibe-Signature does not verify', ctx: req.ov });
-        if (out.status === 400) return http.sendProblem(res, 400, 'reviews.bad_delivery', { detail: 'body must be { event: <envelope>, seq }', ctx: req.ov });
+        if (out.status === 400) return http.sendProblem(res, 400, 'reviews.bad_delivery', { detail: 'body must be { event: <envelope> }', ctx: req.ov });
         if (out.status === 503) return http.sendProblem(res, 503, 'reviews.webhook_disabled', { detail: 'REVIEWS_EVENTS_SECRET is not set', ctx: req.ov });
         if (out.outcome === 'queued') sync.drain().catch(() => {});
         res.status(200).json({ event_id: out.event_id, duplicate: out.duplicate, outcome: out.outcome });
