@@ -156,7 +156,7 @@ function createApp({ config, svc, viewers, platform, sources, sync, keys, db, lo
             res.setHeader('Cache-Control', cache.assetHeaders(rel, { hashed: !!v && v === require('./render/layout').assetVersion(rel) }));
         },
     }));
-    app.use(createMachine({ svc, config }));
+    app.use(createMachine({ svc, config, releaseLastmod: release.full().released_at === release.full().booted_at ? undefined : release.full().released_at }));
 
     app.post(['/e/*', '/editor/*'], limiter(10 * 60000, 120));
     app.post('/e/:slug/correct', limiter(60 * 60000, 20));

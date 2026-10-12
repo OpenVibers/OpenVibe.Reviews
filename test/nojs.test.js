@@ -5,6 +5,17 @@
  * JSON-LD is absent without signals.
  */
 const assert = require('assert');
+
+function assertSitemapLastmods(xml, tag = 'url') {
+    const entries = [...xml.matchAll(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'g'))];
+    for (const [, body] of entries) {
+        const match = /<lastmod>(\d{4}-\d{2}-\d{2})<\/lastmod>/.exec(body);
+        assert.ok(match, body);
+        assert.strictEqual(new Date(match[1]).toISOString().slice(0, 10), match[1]);
+    }
+    return entries;
+}
+
 const {
     boot, req, suite, steamItem, productItem, importItem, createEntity, deliver, sourcesEvent, cookieFor, editorToken, readerToken, fakeCommunity,
 } = require('./helpers');
@@ -87,8 +98,13 @@ t('every public page reads without JavaScript; sitemaps, feeds and robots follow
         assert.ok(jsonLd(page.text).some((x) => x['@type'] === 'Review'));
         sm = await req(h, 'GET', '/sitemaps/entities-1.xml');
         assert.ok(sm.text.includes(`http://reviews.test/e/${e.slug}`));
+        assertSitemapLastmods(sm.text);
+        const entityRow = await h.db.prepare('SELECT updated_at FROM review_entities WHERE id = ?').get(e.id);
+        assert.ok(sm.text.includes(`<lastmod>${new Date(entityRow.updated_at).toISOString().slice(0, 10)}</lastmod>`));
         const idx = await req(h, 'GET', '/sitemap.xml');
         assert.match(idx.text, /sitemaps\/entities-1\.xml/);
+        assertSitemapLastmods(idx.text, 'sitemap');
+        assertSitemapLastmods((await req(h, 'GET', '/sitemaps/pages.xml')).text);
         const atom = await req(h, 'GET', '/feed.atom');
         assert.strictEqual(atom.status, 200);
         assert.match(atom.text, /Portal 2: summary/);

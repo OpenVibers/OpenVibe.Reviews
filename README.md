@@ -138,6 +138,8 @@ secret, Community and editors reported), `/release.json`, `/metrics` (outbox and
 | `POST /internal/events` | OpenVibe.Events deliveries (`sources.item.*`), HMAC-signed; not proxied publicly |
 | `/auth/*` | Network SSO (client `reviews`) |
 
+Sitemap entries carry lastmod from entity updates, the newest entity on the home page, or the release commit for `/about`.
+
 ## API `/api/v1`
 
 People use their Network JWT; services use a client-credentials token for audience
