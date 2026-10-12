@@ -19,7 +19,7 @@ const { SITE_SUMMARY } = require('../render/layout');
 const PER_SITEMAP = 45000;
 const ALL_SUMMARIES = 50000;
 
-function createMachine({ svc, config }) {
+function createMachine({ svc, config, releaseLastmod }) {
     const router = express.Router();
     const origin = config.baseUrl;
     const setCache = (res, s = 300) => res.set('Cache-Control', cache.htmlHeaders({ maxAge: s }));
@@ -36,14 +36,23 @@ function createMachine({ svc, config }) {
     }
 
     router.get('/sitemap.xml', async (_req, res) => {
-        const pages = seo.sitemap(await entityEntries(), { maxUrls: PER_SITEMAP });
-        const maps = [{ loc: `${origin}/sitemaps/pages.xml` }];
-        pages.files.forEach((_f, i) => maps.push({ loc: `${origin}/sitemaps/entities-${i + 1}.xml` }));
+        const entries = (await entityEntries()).filter((e) => e.decision.indexable);
+        const pages = seo.sitemap(entries, { maxUrls: PER_SITEMAP });
+        const updated = entries.map((e) => e.lastmod).filter(Boolean);
+        const homeLastmod = updated.length ? new Date(Math.max(...updated)).toISOString() : releaseLastmod;
+        const pagesLastmod = [homeLastmod, releaseLastmod].filter(Boolean).sort().pop();
+        const maps = [{ loc: `${origin}/sitemaps/pages.xml`, lastmod: pagesLastmod }];
+        pages.files.forEach((_f, i) => {
+            const times = entries.slice(i * PER_SITEMAP, (i + 1) * PER_SITEMAP).map((e) => e.lastmod).filter(Boolean);
+            maps.push({ loc: `${origin}/sitemaps/entities-${i + 1}.xml`, lastmod: times.length ? new Date(Math.max(...times)).toISOString() : undefined });
+        });
         setCache(res).type('application/xml').send(seo.sitemapIndex(maps));
     });
-    router.get('/sitemaps/pages.xml', (_req, res) => {
+    router.get('/sitemaps/pages.xml', async (_req, res) => {
+        const updated = (await entityEntries()).filter((e) => e.decision.indexable && e.lastmod).map((e) => e.lastmod);
+        const homeLastmod = updated.length ? new Date(Math.max(...updated)).toISOString() : releaseLastmod;
         const policy = { minWords: 0, requireSources: false };
-        const entries = ['/', '/about'].map((p) => ({ loc: seo.canonicalUrl(origin, p), decision: seo.evaluate({ state: 'published', visibility: 'public', canonicalUrl: seo.canonicalUrl(origin, p), wordCount: 0 }, { policy, now: Date.now() }) }));
+        const entries = ['/', '/about'].map((p) => ({ loc: seo.canonicalUrl(origin, p), lastmod: p === '/' ? homeLastmod : releaseLastmod, decision: seo.evaluate({ state: 'published', visibility: 'public', canonicalUrl: seo.canonicalUrl(origin, p), wordCount: 0 }, { policy, now: Date.now() }) }));
         setCache(res).type('application/xml').send(seo.sitemap(entries).files[0]);
     });
     router.get('/sitemaps/entities-:n.xml', async (req, res) => {
