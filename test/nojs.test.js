@@ -26,6 +26,17 @@ const noScripts = (html) => html.replace(/<script[\s\S]*?<\/script>/g, '');
 const jsonLd = (html) => [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => JSON.parse(m[1]));
 const robots = (html) => (html.match(/<meta name="robots" content="([^"]+)"/) || [])[1];
 
+t('the Atom feed every page names is a valid, empty feed before anything is published', async () => {
+    const h = await boot();
+    try {
+        const atom = await req(h, 'GET', '/feed.atom');
+        assert.strictEqual(atom.status, 200, atom.text);
+        assert.match(atom.text, /<feed xmlns="http:\/\/www\.w3\.org\/2005\/Atom"/);
+        assert.match(atom.text, /<updated>\d{4}-\d{2}-\d{2}T[^<]+<\/updated>/, 'a real <updated>: the release commit time');
+        assert.ok(!/<entry>/.test(atom.text), 'no entries');
+    } finally { await h.stop(); }
+});
+
 t('AggregateRating JSON-LD is absent without signals, present only while signals back it', async () => {
     const h = await boot();
     try {
