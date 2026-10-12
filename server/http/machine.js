@@ -78,8 +78,11 @@ function createMachine({ svc, config, releaseLastmod }) {
 
     router.get('/feed.atom', async (_req, res) => {
         const items = await feedItems();
-        if (!items.some((i) => i.decision.listable)) return res.status(404).set('Cache-Control', cache.htmlHeaders({ maxAge: 60 })).type('text/plain').send('No summary has been published yet.');
-        setCache(res).type('application/atom+xml').send(seo.atomFeed({ title: 'OpenVibe.Reviews: published summaries', link: `${origin}/`, feedUrl: `${origin}/feed.atom`, id: `${origin}/feed.atom` }, items));
+        // Every page names this feed, so an empty one is still a valid feed (as News, Trade and Coupons serve): its
+        // <updated> is the release's commit time, a real time. Only without one does it answer 404.
+        const empty = !items.some((i) => i.decision.listable);
+        if (empty && !releaseLastmod) return res.status(404).set('Cache-Control', cache.htmlHeaders({ maxAge: 60 })).type('text/plain').send('No summary has been published yet.');
+        setCache(res).type('application/atom+xml').send(seo.atomFeed({ title: 'OpenVibe.Reviews: published summaries', link: `${origin}/`, feedUrl: `${origin}/feed.atom`, id: `${origin}/feed.atom`, ...(empty ? { updated: releaseLastmod } : {}) }, items));
     });
     router.get('/feed.json', async (_req, res) => {
         setCache(res).type('application/feed+json').send(JSON.stringify(seo.jsonFeed({ title: 'OpenVibe.Reviews: published summaries', link: `${origin}/`, feedUrl: `${origin}/feed.json`, description: 'Editor-reviewed summaries, by the time their current revision was published.' }, await feedItems())));
