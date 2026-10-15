@@ -62,8 +62,8 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const viewers = createViewerResolver({ keys, config });
     // Request telemetry (openvibe-sdk/service, plan T1): one aggregated sample per route template, method and status
     // class each flush, stored in this service's telemetry_samples table (app.js mounts the middleware). With workers
-    // on, a 15 s tick writes each interval (the collector has no timer of its own) and the table keeps 30 days.
-    const telemetry = createHttpTelemetry({ service: 'reviews', sink: telemetrySink || createPgTelemetrySink({ db, log }), skipPrefixes: ['/shared'] });
+    // on, a one-minute tick writes each interval (the collector has no timer of its own) and the table keeps 14 days.
+    const telemetry = createHttpTelemetry({ service: 'reviews', sink: telemetrySink || createPgTelemetrySink({ db, log }), skipPrefixes: ['/shared'], intervalMs: 60_000 });
     let retention = null;
     const app = createApp({ config, telemetry, svc, viewers, platform, sources, sync, keys, db, log, rateLimits, fetchImpl, limitsNow, indexnow });
 
@@ -72,8 +72,8 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
 
     const timers = [];
     if (workers) {
-        timers.push(setInterval(() => { telemetry.flush().catch(() => {}); }, 15_000));
-        retention = startTelemetryRetention({ db, log });
+        timers.push(setInterval(() => { telemetry.flush().catch(() => {}); }, 60_000));
+        retention = startTelemetryRetention({ db, log, olderThanDays: 14 });
         if (config.sync.enabled && sources.enabled) {
             const pull = () => sync.pull().then((r) => { if (!r.ok) log.warn(`[Reviews] Sources pull: ${r.reason}`); }).catch((err) => log.warn(`[Reviews] Sources pull: ${err.message}`));
             timers.push(setTimeout(pull, 5000));
