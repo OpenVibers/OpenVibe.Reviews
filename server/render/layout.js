@@ -39,6 +39,7 @@ function setRelease(id) { if (id) RELEASE = String(id); }
 
 const LINKS = [
     { label: 'Entities', href: '/', key: 'home' },
+    { label: 'Every review site', href: '/everywhere', key: 'everywhere' },
     { label: 'How it works', href: '/about', key: 'about' },
 ];
 
@@ -97,6 +98,8 @@ function renderPage(o) {
         home: '/',
         css: asset('css/reviews.css'),
         styles: o.styles,   // openvibe-shared stylesheet names (the home page's showcase.css)
+        // This service's own extra stylesheets for one page (/everywhere's css/everywhere.css).
+        head: (o.localStyles || []).map((rel) => `<link rel="stylesheet" href="${asset(rel)}">`).join('\n'),
         release: RELEASE,
         mainClass: 'rv-main',
         header: `<header class="rv-bar"><a class="rv-brand" href="/">${SITE_NAME}</a><form class="rv-search" action="/search" method="get" role="search"><label for="rv-q" class="rv-sr">Search entities</label><input id="rv-q" name="q" type="search" placeholder="Search entities" value="${esc(o.query || '')}"><button type="submit">Search</button></form><noscript><span class="rv-account">${who}</span></noscript></header>`,

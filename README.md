@@ -16,6 +16,17 @@ only from the signals that exist. It **never fabricates a rating and never prese
 user reviews**: summaries are text written or approved by a person, every point cites the signals
 it rests on, and nothing a summary says can become a number.
 
+## Every review site, one search
+
+The owner's April ask was review aggregation across Glassdoor, Yelp, BBB, Reddit and the rest, "subject to legal and
+technical feasibility". Their terms forbid copying their reviews, so `/everywhere`
+([server/reviews/everywhere.js](server/reviews/everywhere.js)) does what they allow: one name, its kind (a local
+business, an employer, a landlord, a company or online shop, a hosting provider, a product, software) and, for local
+places, where it is, open each site's own search in new tabs: Google Maps, Yelp, Tripadvisor, BBB, Trustpilot,
+Glassdoor, Indeed, Blind, LowEndTalk, RTINGS, YouTube reviews, Amazon, G2, Capterra, Product Hunt and Reddit. The URL
+forms were checked in a real browser on 2026-10-15 (WebHostingTalk, ApartmentRatings and Rate My Landlord have no
+search address that works). Reviews fetches and stores nothing from them; a result page is `noindex`.
+
 ## Owns
 
 The nine authority tables of §15.13, in Reviews' own PostgreSQL database (`ov_reviews` on the host's data role, ADR-035; schema in [migrations/](migrations/)):

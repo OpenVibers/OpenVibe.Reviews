@@ -153,6 +153,15 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
     });
     // What shipped on OpenVibe.Reviews: the shared update log every OpenVibe site has.
     router.get('/updates', (req, res) => send(req, res, 200, frame.updatesBody({ service: 'reviews', siteName: 'OpenVibe.Reviews' }) + `<script src="${ovServe.url('shipped.js')}" defer></script>`, { title: 'What shipped on OpenVibe.Reviews', robots: 'index, follow', cache: 'public', path: '/updates' }));
+    router.get('/everywhere', (req, res) => {
+        const ew = require('../reviews/everywhere');
+        const q = ew.clean(req.query.q, 120);
+        const kind = ew.KINDS.includes(String(req.query.kind)) ? String(req.query.kind) : 'business';
+        const near = ew.clean(req.query.near, 80);
+        send(req, res, 200, views.everywherePage({ q, kind, near, links: ew.linksFor(q, { kind, near }), KINDS: ew.KINDS, KIND_TEXT: ew.KIND_TEXT }), {
+            title: q ? `“${q}” on every review site` : 'Every review site, one search', robots: q ? 'noindex, follow' : 'index, follow', cache: 'public', active: 'everywhere', localStyles: ['css/everywhere.css'],
+        });
+    });
     router.get('/about', (req, res) => send(req, res, 200, views.aboutPage(), { title: 'How it works', robots: 'index, follow', cache: 'public', active: 'about' }));
     router.get('/search', async (req, res) => {
         const query = String(req.query.q || '').slice(0, 200);

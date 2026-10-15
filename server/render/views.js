@@ -78,7 +78,7 @@ function reviewsShowcase() {
         eyebrow: 'OpenVibe.Reviews',
         title: 'Review scores you can', accent: 'trace',
         lede: 'Ratings and recommendations gathered from named sources. Every number shows where it came from and when it was read, and when no source has said anything there is no score at all.',
-        actions: [{ label: 'Browse what is reviewed', href: '#entities', primary: true }, { label: 'How it works', href: '/about' }],
+        actions: [{ label: 'Browse what is reviewed', href: '#entities', primary: true }, { label: 'Search every review site', href: '/everywhere' }, { label: 'How it works', href: '/about' }],
     }) + showcase.features({
         title: 'What every page shows',
         items: [
@@ -124,6 +124,23 @@ function home({ entities, total, editor }) {
 ${entities.length ? html`<p class="sc-lede">Each score comes from named sources. Open one to see every signal behind it, when it was read, and how the number was worked out.</p><ul class="rv-board">${entities.map(boardCard)}</ul>`
         : html`<p class="rv-muted">Nothing yet. Entities appear here once a source has stated something about them (or an editor has published a summary).</p>`}
 <p class="rv-muted">${n(total)} reviewed in total. <a href="/feed.atom">Atom</a> · <a href="/feed.json">JSON Feed</a>${editor ? html` · <a href="/editor">Editor desk</a>` : ''}</p></section>`;
+}
+
+/** /everywhere: one name opens every review site's own search for it (server/reviews/everywhere.js). */
+function everywherePage({ q, kind, near, links, KINDS, KIND_TEXT }) {
+    const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+    const tab = (k) => `/everywhere?${new URLSearchParams({ q, kind: k, ...(near ? { near } : {}) })}`;
+    return html`<section><h1>${q ? html`“${q}” on every review site` : 'Every review site, one search'}</h1>
+<p class="rv-lede">Type a name once: each review site opens its own search for it, in a new tab. The reviews stay on those sites, under their own rules; OpenVibe.Reviews copies none of them.</p>
+<form class="rv-ew-form" method="get" action="/everywhere" role="search">
+<div class="rv-ew-row"><label for="ew-q">Name</label><input id="ew-q" name="q" type="search" required maxlength="120" placeholder="A business, an employer, a landlord, a product" value="${q}"></div>
+<div class="rv-ew-row"><label for="ew-kind">It is</label><select id="ew-kind" name="kind">${KINDS.map((k) => html`<option value="${k}"${k === kind ? raw(' selected') : ''}>${KIND_TEXT[k]}</option>`)}</select></div>
+<div class="rv-ew-row"><label for="ew-near">Near (for a local business or landlord)</label><input id="ew-near" name="near" type="text" maxlength="80" placeholder="City and state" value="${near}"></div>
+<p><button type="submit">Search every site</button></p></form>
+${q ? html`<nav class="rv-ew-kinds" aria-label="What it is">${KINDS.map((k) => (k === kind ? html`<span class="rv-ew-kind on" aria-current="page">${KIND_TEXT[k]}</span>` : html`<a class="rv-ew-kind" href="${tab(k)}">${KIND_TEXT[k]}</a>`))}</nav>
+<ul class="rv-ew-sites">${links.map((l) => html`<li class="rv-ew-site"><a class="rv-ew-open" href="${l.url}" target="_blank" rel="noopener nofollow"><span class="rv-ew-name">${l.name}</span><span class="rv-ew-host">${host(l.url)} ↗</span></a><p class="rv-ew-best">${l.best}</p></li>`)}</ul>
+<p class="rv-muted">Read more than one: each site has its own audience and its own rules about who may review.</p>` : ''}
+</section>`;
 }
 
 function aboutPage() {
@@ -465,6 +482,7 @@ function itemPage({ item, candidates, error = null }) {
 }
 
 module.exports = {
+    everywherePage,
     home, aboutPage, searchPage, entityPage, historyPage, summaryRevisionPage, correctionPage,
     editorHome, newEntityPage, editEntityPage, itemPage, signInPage, errorBody, epath, signalValue, KIND_LABEL,
 };
