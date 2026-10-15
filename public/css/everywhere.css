@@ -1,0 +1,16 @@
+/* OpenVibe.Reviews — /everywhere only (every review site's own search), so reviews.css stays inside its budget. */
+.rv-ew-form { display: grid; gap: 10px; max-width: 640px; margin: 14px 0 18px; }
+.rv-ew-row { display: grid; gap: 4px; }
+.rv-ew-row label { font-weight: 700; font-size: .9rem; }
+.rv-ew-row input, .rv-ew-row select { font: inherit; padding: 9px 11px; border-radius: 10px; border: 1px solid var(--border-light, #2c3d5c); background: var(--bg-secondary, #0f1729); color: var(--text-primary, #e6edf7); }
+.rv-ew-form button { font: inherit; font-weight: 700; padding: 9px 16px; border-radius: 10px; border: 0; background: var(--accent-strong, #2563eb); color: var(--on-accent-strong, #fff); cursor: pointer; }
+.rv-ew-kinds { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 14px; }
+.rv-ew-kind { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border-light, #2c3d5c); text-decoration: none; color: inherit; font-size: .9rem; }
+.rv-ew-kind.on { border-color: var(--accent, #3b82f6); font-weight: 700; }
+.rv-ew-sites { list-style: none; padding: 0; margin: 0 0 10px; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.rv-ew-site { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border, #1f2d47); background: var(--bg-card, #131c2e); }
+.rv-ew-site:hover { border-color: var(--accent, #3b82f6); }
+.rv-ew-open { display: flex; flex-direction: column; gap: 2px; text-decoration: none; color: var(--text-primary, #e6edf7); }
+.rv-ew-name { font-weight: 700; font-size: 1.05rem; }
+.rv-ew-host { font-size: .82rem; color: var(--accent-text, var(--accent, #3b82f6)); }
+.rv-ew-best { margin: 0; font-size: .9rem; color: var(--text-secondary, #96a7c2); }
