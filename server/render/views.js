@@ -86,16 +86,44 @@ function reviewsShowcase() {
             { icon: 'ov:check', title: 'An aggregate you can check', text: 'The inputs and the method are listed. An editor can leave a source out only with the reason shown.' },
             { icon: 'ov:history', title: 'Changes on the record', text: 'Replaced and withdrawn signals stay in the history, beside every revision of the aggregate.' },
             { icon: 'ov:docs', title: 'Summaries by people', text: 'Written or approved by an editor, citing the signals they rest on, and never carrying a rating.' },
+            { icon: 'ov:shield', title: 'Corrections from readers', text: 'Anyone signed in with OpenVibe can send the editors a correction; an accepted one is published with its note.' },
+            { icon: 'ov:feeds', title: 'Feeds and an API', text: 'New and changed scores arrive in Atom and JSON Feed, and the API serves the same data to OpenVibe apps.' },
         ],
     });
 }
 
+/**
+ * One entity on the front page's board: its headline number (the recommendation share, else the rating on its scale,
+ * else the rating share), a meter for it, and how many signals it rests on. No aggregate: the card says so.
+ */
+function boardCard(x) {
+    const c = x.aggregate && x.aggregate.result ? x.aggregate.result.components : null;
+    let big = null;
+    let label = '';
+    let share = null;
+    let basis = '';
+    if (c && c.recommendation) {
+        big = `${c.recommendation.percent}%`; label = 'recommend'; share = c.recommendation.percent;
+        basis = `${n(c.recommendation.positive)} of ${n(c.recommendation.total)} reviews`;
+    } else if (c && c.rating && c.rating.on_scale) {
+        big = `${c.rating.on_scale.value}`; label = `out of ${c.rating.on_scale.best}`; share = (100 * c.rating.on_scale.value) / c.rating.on_scale.best;
+        basis = `${n(c.rating.count)} ratings`;
+    } else if (c && c.rating) {
+        big = `${c.rating.percent}%`; label = 'rating'; share = c.rating.percent;
+        basis = `${n(c.rating.count)} ratings`;
+    }
+    const pct = share == null ? 0 : Math.max(0, Math.min(100, Number(share)));
+    return html`<li><a class="rv-card" href="${epath(x.entity)}"><span class="rv-card-head"><b>${x.entity.name}</b> <span class="rv-tag">${KIND_LABEL[x.entity.kind]}</span></span>${big ? html`<span class="rv-score"><span class="rv-big">${big}</span> <span class="rv-muted">${label}</span></span>
+<span class="rv-meter" aria-hidden="true"><span style="width:${pct.toFixed(1)}%"></span></span><span class="rv-basis">${basis}${c && c.recommendation && c.rating ? html` · ${c.rating.on_scale ? `${c.rating.on_scale.value} / ${c.rating.on_scale.best}` : `${c.rating.percent}%`} from ${n(c.rating.count)} ratings` : ''}</span>`
+        : html`<span class="rv-basis">No score yet: no source has said enough.</span>`}</a></li>`;
+}
+
 function home({ entities, total, editor }) {
     return html`${raw(reviewsShowcase())}
-<section id="entities"><h2>Entities with source data</h2>
-${entities.length ? html`<ul class="rv-entities">${entities.map((x) => html`<li><a href="${epath(x.entity)}"><strong>${x.entity.name}</strong></a> <span class="rv-tag">${KIND_LABEL[x.entity.kind]}</span><br><span class="rv-muted">${aggregateLine(x.aggregate)}</span></li>`)}</ul>`
+<section id="entities" class="sc-sec" aria-labelledby="rv-board-h"><h2 id="rv-board-h">What is reviewed</h2>
+${entities.length ? html`<p class="sc-lede">Each score comes from named sources. Open one to see every signal behind it, when it was read, and how the number was worked out.</p><ul class="rv-board">${entities.map(boardCard)}</ul>`
         : html`<p class="rv-muted">Nothing yet. Entities appear here once a source has stated something about them (or an editor has published a summary).</p>`}
-<p class="rv-muted">${n(total)} entit${total === 1 ? 'y' : 'ies'} in total. <a href="/feed.atom">Atom</a> · <a href="/feed.json">JSON Feed</a>${editor ? html` · <a href="/editor">Editor desk</a>` : ''}</p></section>`;
+<p class="rv-muted">${n(total)} reviewed in total. <a href="/feed.atom">Atom</a> · <a href="/feed.json">JSON Feed</a>${editor ? html` · <a href="/editor">Editor desk</a>` : ''}</p></section>`;
 }
 
 function aboutPage() {
