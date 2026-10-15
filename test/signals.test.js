@@ -189,6 +189,21 @@ t('an item update supersedes the signal; the pull path follows Sources in change
     } finally { await h.stop(); }
 });
 
+t('one page of many reviews of a game re-indexes the game once (the Search follow-up events stay under the loop guard)', async () => {
+    const h = await boot();
+    try {
+        const e = await createEntity(h, { name: 'Portal 2', kind: 'game', aliases: [{ type: 'source', value: 'steam-reviews-portal-2' }] });
+        const before = (await outbox(h)).filter((x) => x.event_type === 'reviews.index_document.upserted' && x.subject.id.endsWith(e.id)).length;
+        for (let i = 0; i < 12; i++) h.sources.put(steamItem({ votedUp: i % 3 !== 0 }));
+        const sync = await req(h, 'POST', '/api/v1/sources/sync', { token: IMPORT() });
+        assert.strictEqual(sync.json.pull.applied, 12);
+        const after = (await outbox(h)).filter((x) => x.event_type === 'reviews.index_document.upserted' && x.subject.id.endsWith(e.id)).length;
+        assert.strictEqual(after - before, 1, `one index document for the page, not one per review (got ${after - before})`);
+        const agg = await aggregateOf(h, e.slug);
+        assert.strictEqual(agg.aggregate.result.components.recommendation.percent, 66.7, 'the page\'s 12 reviews all counted');
+    } finally { await h.stop(); }
+});
+
 t('a Sources outage changes nothing and invents nothing', async () => {
     const h = await boot();
     try {
