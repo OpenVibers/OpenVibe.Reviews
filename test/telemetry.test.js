@@ -3,7 +3,7 @@
  * Request telemetry (openvibe-sdk/service, plan T1 step 10): start() builds one collector for service 'reviews' and
  * createApp mounts it; a page hit five times flushes as ONE aggregated http.request sample (route template, 2xx, count
  * 5); /metrics and /shared files make none; the lifecycle flushes before the database closes; with workers on, a 15 s
- * tick and the 30-day retention run; the retention deletes only rows older than 30 days.
+ * tick and the 14-day retention run; the retention deletes only rows older than 14 days.
  */
 const assert = require('assert');
 const fs = require('fs');
@@ -14,7 +14,7 @@ const H = require('./helpers');
 (async () => {
     const index = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
     assert.match(index, /timers\.push\(setInterval\(\(\) => \{ telemetry\.flush\(\)/, 'the workers tick flushes the collector');
-    assert.match(index, /retention = startTelemetryRetention\(\{ db, log \}\)/, 'the workers start the retention');
+    assert.match(index, /retention = startTelemetryRetention\(\{ db, log, olderThanDays: 14 \}\)/, 'the workers start the retention');
     assert.match(index, /close: \[\n\s+async \(\) => \{ if \(retention\) await retention\.stop\(\); if \(telemetry\) await telemetry\.stop\(\); \},/, 'the flush runs before the database closes');
 
     const samples = [];
@@ -36,9 +36,9 @@ const H = require('./helpers');
 
         await h.db.query('DELETE FROM telemetry_samples');
         const insert = (days) => h.db.query("INSERT INTO telemetry_samples (at, service, operation) VALUES (now() - make_interval(days => $1), 'reviews', 'http.request')", [days]);
-        await insert(45);
+        await insert(20);
         await insert(1);
-        assert.strictEqual(await pruneTelemetry({ db: h.db }), 1);
+        assert.strictEqual(await pruneTelemetry({ db: h.db, olderThanDays: 14 }), 1);
         assert.strictEqual((await h.db.query('SELECT count(*)::int AS n FROM telemetry_samples')).rows[0].n, 1);
         console.log('telemetry ok');
     } finally {
