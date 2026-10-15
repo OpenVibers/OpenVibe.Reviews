@@ -73,6 +73,18 @@ table { border-collapse: collapse; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 /* Reviews: aggregate, signals, summary */
 .rv-entities { list-style: none; padding: 0; }
+/* The front page's board: one card per entity, its score with a meter and what it rests on. */
+.rv-board { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); }
+.rv-card { display: flex; flex-direction: column; gap: 6px; height: 100%; padding: 14px 16px; border: 1px solid var(--rv-line); border-radius: 12px; background: var(--rv-panel); color: var(--rv-text); text-decoration: none; }
+.rv-card:hover { border-color: var(--rv-accent); }
+.rv-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.rv-card-head b { font-size: 1.02rem; line-height: 1.3; }
+.rv-card-head .rv-tag { flex: none; white-space: nowrap; }
+.rv-score { display: flex; align-items: baseline; gap: 6px; margin-top: auto; }
+.rv-big { font-size: 1.7rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.rv-meter { display: block; height: 6px; border-radius: 3px; background: var(--rv-line); overflow: hidden; }
+.rv-meter > span { display: block; height: 100%; border-radius: 3px; background: var(--rv-accent); }
+.rv-basis { font-size: 13px; color: var(--rv-muted); }
 .rv-entities li { padding: 8px 0; border-top: 1px solid var(--rv-line); }
 .rv-agg-box { background: var(--rv-panel); border: 1px solid var(--rv-line); border-radius: 8px; padding: 10px 14px; }
 .rv-agg { font-size: 1.15rem; margin: 4px 0; }
