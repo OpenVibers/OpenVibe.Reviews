@@ -264,9 +264,11 @@ Other services call Reviews with `reviews.summary.propose` (OpenVibe.AI) or `rev
 - the threat review's fixes: cross-site writes refused on pages and on the cookie-authenticated API, the correction queue's per-person allowance, bounded audit text, editor ids hidden from readers, ratings in words refused in AI text, out-of-scale source ratings not counted (`threat.test.js`; see [docs/threat-review.md](docs/threat-review.md))
 - every event validates as `events.event-envelope@1` and every index document as `search.index-document@1`; proposals validate against the contracts schemas; nothing seeded (`signals.test.js`, `proposals.test.js`)
 
-Not yet demonstrated: a run against the deployed Sources with a real, enabled review source (none is
-enabled), a real OpenVibe.AI `reviews.summarize_entity` run, and delivery of a real item through the
-deployed Events (the `sources.item.*` subscription exists in production; nothing has been delivered).
+Demonstrated on production (2026-10-15): the deployed Sources runs 19 enabled review sources, and their items reach
+Reviews through the deployed Events `sources.item.*` subscription (1,187 signals stored).
+
+Not yet demonstrated: a real OpenVibe.AI `reviews.summarize_entity` run, because entities wait on an editor and no
+summary exists yet.
 
 ## Security
 
