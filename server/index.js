@@ -18,7 +18,8 @@ const { createKeyStore } = require('./auth/keys');
 const { createViewerResolver } = require('./auth/viewer');
 const { createApp } = require('./app');
 const { createIndexNow } = require('openvibe-shared/indexnow');
-const { gracefulStop } = require('openvibe-sdk/service');
+const { gracefulStop, createHttpTelemetry } = require('openvibe-sdk/service');
+const { createPgTelemetrySink, startTelemetryRetention } = require('openvibe-sdk/telemetry');
 
 /**
  * The process stop (openvibe-sdk/service, plan T1): the job timers and the Events outbox relay stop taking new
@@ -27,7 +28,7 @@ const { gracefulStop } = require('openvibe-sdk/service');
  * its own database (start's `givenDb`), which stays open. `exit` and `signals` are injectable so a test can watch
  * the stop and no test process installs signal handlers.
  */
-function createLifecycle({ server, db, valkey = null, platform, timers = [], closeDb = true, exit, signals, log } = {}) {
+function createLifecycle({ server, db, valkey = null, platform, timers = [], telemetry = null, retention = null, closeDb = true, exit, signals, log } = {}) {
     return gracefulStop({
         name: 'Reviews', server, log, drainMs: 8000, deadlineMs: 10000, deadlineExitCode: 0, exit, signals,
         stop: [
@@ -35,13 +36,14 @@ function createLifecycle({ server, db, valkey = null, platform, timers = [], clo
             () => platform.outbox.stop(),
         ],
         close: [
+            async () => { if (retention) await retention.stop(); if (telemetry) await telemetry.stop(); },
             () => { if (closeDb) return db.close(); },
             () => { if (valkey) return valkey.close(); },
         ],
     });
 }
 
-async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, tokens = null, publicKey = null, log = console, listen = true, workers = listen, rateLimits = true, limitsNow = null, indexnow: givenIndexnow = undefined, signals = false, exit = () => {} } = {}) {
+async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, tokens = null, publicKey = null, log = console, telemetrySink = null, listen = true, workers = listen, rateLimits = true, limitsNow = null, indexnow: givenIndexnow = undefined, signals = false, exit = () => {} } = {}) {
     config = config || load();
     // PostgreSQL (ADR-035): opened and migrated here unless the caller (a test) hands in a migrated handle.
     const db = givenDb || await openDb(config, { log });
@@ -58,13 +60,20 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const keys = createKeyStore({ config, fetchImpl, log, publicKey });
     keys.ensure().catch(() => {});
     const viewers = createViewerResolver({ keys, config });
-    const app = createApp({ config, svc, viewers, platform, sources, sync, keys, db, log, rateLimits, fetchImpl, limitsNow, indexnow });
+    // Request telemetry (openvibe-sdk/service, plan T1): one aggregated sample per route template, method and status
+    // class each flush, stored in this service's telemetry_samples table (app.js mounts the middleware). With workers
+    // on, a 15 s tick writes each interval (the collector has no timer of its own) and the table keeps 30 days.
+    const telemetry = createHttpTelemetry({ service: 'reviews', sink: telemetrySink || createPgTelemetrySink({ db, log }), skipPrefixes: ['/shared'] });
+    let retention = null;
+    const app = createApp({ config, telemetry, svc, viewers, platform, sources, sync, keys, db, log, rateLimits, fetchImpl, limitsNow, indexnow });
 
     // Search holds whatever the current rules say (idempotent: unchanged documents are not re-sent).
     try { await svc.reconcileIndex(); } catch (err) { log.warn(`[Reviews] index reconcile: ${err.message}`); }
 
     const timers = [];
     if (workers) {
+        timers.push(setInterval(() => { telemetry.flush().catch(() => {}); }, 15_000));
+        retention = startTelemetryRetention({ db, log });
         if (config.sync.enabled && sources.enabled) {
             const pull = () => sync.pull().then((r) => { if (!r.ok) log.warn(`[Reviews] Sources pull: ${r.reason}`); }).catch((err) => log.warn(`[Reviews] Sources pull: ${err.message}`));
             timers.push(setTimeout(pull, 5000));
@@ -82,12 +91,12 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         log.log(`[Reviews] ${config.nodeEnv} on http://${config.host}:${config.port} → ${config.baseUrl}`);
     }
 
-    const lifecycle = createLifecycle({ server, db, platform, timers, closeDb: !givenDb, signals, exit, log });
+    const lifecycle = createLifecycle({ server, db, telemetry, retention, platform, timers, closeDb: !givenDb, signals, exit, log });
 
     async function stop() {
         return lifecycle.stop('stop');
     }
-    return { app, db, svc, sync, stores, platform, keys, viewers, indexnow, server, config, timers, lifecycle, stop };
+    return { app, db, telemetry, svc, sync, stores, platform, keys, viewers, indexnow, server, config, timers, lifecycle, stop };
 }
 
 module.exports = { start, createLifecycle };

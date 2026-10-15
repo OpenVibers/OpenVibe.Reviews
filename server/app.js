@@ -42,7 +42,7 @@ function lagged(read, initial) {
     };
 }
 
-function createApp({ config, svc, viewers, platform, sources, sync, keys, db, log = console, rateLimits = true, fetchImpl = globalThis.fetch, limitsNow = null, indexnow = null }) {
+function createApp({ config, telemetry = null, svc, viewers, platform, sources, sync, keys, db, log = console, rateLimits = true, fetchImpl = globalThis.fetch, limitsNow = null, indexnow = null }) {
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy);
@@ -54,6 +54,7 @@ function createApp({ config, svc, viewers, platform, sources, sync, keys, db, lo
     // Valkey (ADR-035): shared, never-authoritative state (per-actor limit counters). Optional.
     const valkey = config.valkey.url ? require('openvibe-sdk/valkey').createValkey({ url: config.valkey.url, prefix: config.valkey.prefix, log }) : null;
     const metrics = require('openvibe-shared/metrics').instrument(app, { service: 'reviews', release: release.release });
+    if (telemetry) app.use(telemetry.middleware());   // request telemetry (server/index.js)
     metrics.registry.gauge({
         name: 'reviews_event_outbox', help: 'Events in the outbox by state', labelNames: ['state'],
         collect: lagged(async () => [{ labels: { state: 'pending' }, value: await platform.outbox.pending() }, { labels: { state: 'rejected' }, value: await platform.outbox.rejected() }], []),
