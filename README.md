@@ -126,6 +126,15 @@ served at `/<key>.txt`; unset, nothing is sent, and drafts and noindex pages nev
 **Operations.** `/api/health`, `/api/ready` (DB required; Network key, Sources, Events relay, webhook
 secret, Community and editors reported), `/release.json`, `/metrics` (outbox and backlog gauges).
 
+**Telemetry.** Each HTTP request is aggregated by route template, method and status class, never by raw
+URL; `/shared` files, static assets, health, readiness and `/metrics` are not counted. Once a minute one
+`http.request` sample per key, plus the active-requests, p95 latency and event-loop-lag gauges, is
+written to this service's own `telemetry_samples` table (openvibe-sdk 0.46 telemetry, the
+`platform.telemetry-sample@1` shape); rows older than 14 days are deleted daily. `start()` in
+`server/index.js` builds the collector and, with the workers on (production), flushes it every minute
+and runs the 14-day retention; `server/app.js` mounts its middleware; the table is created by migration
+`migrations/0003_telemetry.sql`.
+
 ## Routes
 
 | Path | What |
