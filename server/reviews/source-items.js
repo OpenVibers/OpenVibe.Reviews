@@ -52,11 +52,13 @@ function createSourcesSync({ db, svc, sources, config, now = () => Date.now(), l
 
     // The page's source health and registry records, merged into the applyItem sourceInfo (as before).
     let pageHealth = {};
+    let pageMore = false;
     const infos = new Map();
     const pageSource = {
         async listItems(opts) {
             const body = await sources.listItems(opts);
             pageHealth = body.sources || {};
+            pageMore = Boolean(body.more);
             for (const key of new Set((body.items || []).map((i) => i.source_key).filter(Boolean))) {
                 if (infos.has(key)) continue;
                 if (await q.sourceExists.get(key)) { infos.set(key, null); continue; }
@@ -70,25 +72,35 @@ function createSourcesSync({ db, svc, sources, config, now = () => Date.now(), l
         if (!sources.enabled) return { ok: false, reason: 'OpenVibe.Sources is not configured' };
         const counts = { pages: 0, applied: 0, unchanged: 0, skipped: 0, hold: 0, removed: 0, failed: 0 };
         try {
-            const summary = await pullChanges({
-                db, cursor, source: pageSource, name: CURSOR,
-                maxPages, pageSize: config.sync.pageSize,
-                apply: async (item) => {
-                    const info = { ...(infos.get(item.source_key) || {}), ...(pageHealth[item.source_key] || {}) };
-                    const out = await svc.applyItem(item, { sourceInfo: info, actor: system });
-                    if (out.outcome === 'unchanged') counts.unchanged++;
-                    else if (String(out.outcome).startsWith('ignored')) counts.skipped++;
-                    else counts.applied++;
-                    return PULL_OUTCOME[out.outcome] || 'applied';
-                },
-                onItem: (item, err, outcome) => { if (outcome === 'failed') log.warn(`[Reviews] item ${item && item.id} skipped: ${err && err.message}`); },
-            });
-            counts.pages = summary.pages;
-            counts.hold = summary.hold;
-            counts.removed = summary.removed;
-            counts.failed = summary.failed;
+            // One page at a time, each inside svc.batch(): a game whose page brings 200 new reviews gets one new
+            // aggregate and one Search document at the end of the page, not one per review. (Per review, the index events
+            // of one entity crowded into one Events publish, so Search's own follow-up events for that document repeated
+            // in one trace and Events refused them as a probable loop.)
+            let after = null;
+            for (let page = 0; page < maxPages; page++) {
+                pageMore = false;
+                const summary = await svc.batch(async () => await pullChanges({
+                    db, cursor, source: pageSource, name: CURSOR,
+                    maxPages: 1, pageSize: config.sync.pageSize,
+                    apply: async (item) => {
+                        const info = { ...(infos.get(item.source_key) || {}), ...(pageHealth[item.source_key] || {}) };
+                        const out = await svc.applyItem(item, { sourceInfo: info, actor: system });
+                        if (out.outcome === 'unchanged') counts.unchanged++;
+                        else if (String(out.outcome).startsWith('ignored')) counts.skipped++;
+                        else counts.applied++;
+                        return PULL_OUTCOME[out.outcome] || 'applied';
+                    },
+                    onItem: (item, err, outcome) => { if (outcome === 'failed') log.warn(`[Reviews] item ${item && item.id} skipped: ${err && err.message}`); },
+                }));
+                counts.pages += summary.pages;
+                counts.hold += summary.hold;
+                counts.removed += summary.removed;
+                counts.failed += summary.failed;
+                after = summary.after;
+                if (!pageMore) break;
+            }
             await setState('sources.last_pull_ok_at', new Date(now()).toISOString());
-            return { ok: true, after: summary.after, ...counts };
+            return { ok: true, after, ...counts };
         } catch (err) {
             await setState('sources.last_pull_error', `${new Date(now()).toISOString()} ${String(err && err.message).slice(0, 300)}`);
             return { ok: false, reason: err && err.message, ...counts };
