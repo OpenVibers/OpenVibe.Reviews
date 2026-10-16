@@ -131,7 +131,7 @@ function everywherePage({ q, kind, near, links, KINDS, KIND_TEXT }) {
     const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
     const tab = (k) => `/everywhere?${new URLSearchParams({ q, kind: k, ...(near ? { near } : {}) })}`;
     return html`<section><h1>${q ? html`“${q}” on every review site` : 'Every review site, one search'}</h1>
-<p class="rv-lede">Type a name once: each review site opens its own search for it, in a new tab. The reviews stay on those sites, under their own rules; OpenVibe.Reviews copies none of them.</p>
+<p class="rv-lede">Type a name once and every review site searches it for you, each in a new tab: Google, Yelp, Glassdoor, the BBB, Trustpilot, Reddit and the rest, next to the ratings OpenVibe.Reviews gathers from named sources.</p>
 <form class="rv-ew-form" method="get" action="/everywhere" role="search">
 <div class="rv-ew-row"><label for="ew-q">Name</label><input id="ew-q" name="q" type="search" required maxlength="120" placeholder="A business, an employer, a landlord, a product" value="${q}"></div>
 <div class="rv-ew-row"><label for="ew-kind">It is</label><select id="ew-kind" name="kind">${KINDS.map((k) => html`<option value="${k}"${k === kind ? raw(' selected') : ''}>${KIND_TEXT[k]}</option>`)}</select></div>
