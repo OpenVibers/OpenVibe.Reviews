@@ -204,6 +204,42 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
         await svc.removeMemberReview(req.params.id, req.actor, (req.body || {}).reason);
         res.redirect(303, `${svc.entityPath(e)}#member-reviews`);
     }));
+    // /save: the rating another site's page shows, brought by a member (the Companion fills the query in).
+    const saveValues = (src) => {
+        const v = {};
+        for (const k of ['site', 'url', 'name', 'kind', 'place', 'value', 'best', 'count', 'via', 'entity']) if (src[k] != null) v[k] = String(src[k]).slice(0, k === 'url' ? 1000 : 200);
+        if (src.rating != null && v.value == null) v.value = String(src.rating).slice(0, 20);
+        if (!v.site && v.url) v.site = svc.seenSiteOf(v.url) || '';
+        return v;
+    };
+    const savePage = async (req, res, status, values, error = null) => {
+        const entity = values.entity ? await svc.findEntity(values.entity).catch(() => null) : null;
+        send(req, res, status, views.savePage({ values: { ...values, next: req.originalUrl }, entity, sites: svc.SEEN_SITES, kinds: svc.MEMBER_KINDS, local: [...svc.LOCAL_KINDS], actor: req.actor, error }), {
+            title: 'Add a rating from another site', robots: 'noindex, nofollow',
+        });
+    };
+    router.get('/save', wrap(async (req, res) => {
+        if (!req.actor.subject) return needSignIn(req, res, 'Sign in with your OpenVibe account to add a rating from another site.');
+        await savePage(req, res, 200, saveValues(req.query));
+    }));
+    router.post('/save', F('reviews.rating.save'), form, wrap(async (req, res) => {
+        if (!req.actor.subject) return needSignIn(req, res, 'Sign in with your OpenVibe account to add a rating from another site.');
+        const v = saveValues(req.body || {});
+        try {
+            const target = v.entity ? v.entity : { kind: v.kind, name: v.name, place: v.place };
+            const { entity } = await svc.saveSeenRating(target, { url: v.url, value: v.value, best: v.best, count: v.count, via: v.via }, req.actor);
+            res.redirect(303, `${svc.entityPath(entity)}?saved=1#elsewhere`);
+        } catch (err) {
+            if (!err.status || err.status >= 500) throw err;
+            await savePage(req, res, err.status, v, err.message);
+        }
+    }));
+    router.post('/save/:id/remove', F('reviews.rating.save'), form, wrap(async (req, res) => {
+        if (!req.actor.subject) return needSignIn(req, res, 'Sign in with your OpenVibe account.');
+        const out = await svc.removeSeenRating(req.params.id, req.actor, (req.body || {}).reason);
+        const e = await svc.findEntity(out.entity_id).catch(() => null);
+        res.redirect(303, e ? `${svc.entityPath(e)}#elsewhere` : '/');
+    }));
     // /k/employer, /k/restaurant…: everything of one kind, the most reviewed by members first.
     router.get('/k/:kind', wrap(async (req, res) => {
         const kind = String(req.params.kind);
@@ -246,8 +282,9 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
         const discussion = await discussionFor(e, req.actor);
         const members = await svc.memberReviews(e, req.actor);
         const elsewhere = views.elsewhereLinks(e);
+        const seen = await svc.seenRatings(e);
         const signedIn = !!req.actor.subject;
-        send(req, res, status, views.entityPage(p, { discussion, actor: req.actor, flash: req.query.saved ? 'Saved.' : null, members, elsewhere, reviewError, reviewValues }), {
+        send(req, res, status, views.entityPage(p, { discussion, actor: req.actor, flash: req.query.saved ? 'Saved.' : null, members, elsewhere, seen, reviewError, reviewValues }), {
             decision: p.decision, title: e.name, cache: discussion.state === 'ok' || signedIn ? null : 'public', path: svc.entityPath(e),
             description: e.description && !svc.LOCAL_KINDS.has(e.kind) ? e.description
                 : `${e.name}${e.description ? ` (${e.description})` : ''}: ${members.stats.count ? `${members.stats.average} out of 5 from ${members.stats.count} OpenVibe member review${members.stats.count === 1 ? '' : 's'}, ` : ''}review signals${p.sources.length ? ` from ${p.sources.map((s) => s.name || s.key).join(', ')}` : ''}, and every other review site in one place.`,

@@ -130,3 +130,7 @@ code { overflow-wrap: anywhere; }
 .rv-recent { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 10px; }
 .rv-recent a { display: block; padding: 12px; border: 1px solid var(--rv-line); border-radius: 10px; text-decoration: none; color: inherit; height: 100%; box-sizing: border-box; }
 .rv-pager { margin-top: 12px; }
+.rv-seen { display: inline; }
+.rv-seen b { font-size: 1.05em; }
+.rv-row { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.rv-row label { flex: 0 1 auto; }

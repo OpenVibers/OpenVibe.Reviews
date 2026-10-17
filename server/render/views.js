@@ -182,11 +182,45 @@ ${rels.length ? html`<label>How you know it <select name="relation"><option valu
 </section>`;
 }
 
-function elsewhereSection(links, entity) {
-    if (!links.length) return '';
+function elsewhereSection(links, entity, { seen = {}, actor = null, editor = false } = {}) {
+    if (!links.length && !Object.keys(seen).length) return '';
+    const known = new Set(links.map((l) => l.id));
+    const extra = Object.values(seen).filter((r) => !known.has(r.site)).map((r) => ({ id: r.site, name: r.name, url: r.page_url, best: '' }));
+    const anySeen = Object.keys(seen).length > 0;
     return html`<section id="elsewhere" aria-labelledby="ew-h"><h2 id="ew-h">${entity.name} on other review sites</h2>
-<p class="rv-muted">Each opens that site's own page for it, in a new tab.</p>
-<ul class="rv-elsewhere">${links.map((l) => html`<li><a href="${l.url}" target="_blank" rel="nofollow noopener noreferrer">${l.name}</a> <span class="rv-muted">${l.best}</span></li>`)}</ul></section>`;
+<p class="rv-muted">Each opens that site's own page for it, in a new tab.${anySeen ? ' A rating beside a site is what its page showed when an OpenVibe member looked; it is theirs, not ours, and it is never mixed into the numbers above.' : ''}</p>
+<ul class="rv-elsewhere">${[...links, ...extra].map((l) => { const r = seen[l.id]; return html`<li><a href="${r ? r.page_url : l.url}" target="_blank" rel="nofollow noopener noreferrer">${l.name}</a> ${r ? seenLine(r, { entity, actor, editor }) : html`<span class="rv-muted">${l.best}</span>`}</li>`; })}</ul>
+<p class="rv-muted">Saw its rating on Glassdoor, Indeed, Yelp, the BBB, Trustpilot, Google Maps or Tripadvisor? <a href="/save?entity=${entity.slug}">Add what that page shows</a>${actor && actor.subject ? '' : ' (with an OpenVibe account)'}, or let the <a href="https://openvibe.coupons/companion">OpenVibe Companion</a> read it for you.</p></section>`;
+}
+
+/** One site's rating as a member saw it, with when, how many members saw it, and a way to take it down. */
+function seenLine(r, { entity, actor, editor }) {
+    const mine = actor && actor.subject && r.seen_by === actor.subject;
+    return html`<span class="rv-seen"><b>${String(r.value)}</b> <span class="rv-muted">out of ${String(r.best)}${r.count != null ? ` from ${n(r.count)} rating${r.count === 1 ? '' : 's'}` : ''} · seen ${t(r.seen_at)}${r.members > 1 ? ` (${r.members} members)` : ''}</span>${mine || editor ? html` <form method="post" action="/save/${r.id}/remove" class="rv-inline"><input type="hidden" name="entity" value="${entity.slug}">${mine ? '' : html`<input type="text" name="reason" placeholder="Reason (kept in the log)" aria-label="Reason for removing" maxlength="300"> `}<button type="submit" class="rv-link-button">${mine ? 'Remove mine' : 'Remove'}</button></form>` : ''}</span>`;
+}
+
+/** /save: a member checks the rating another site's page shows (filled in by the Companion, or typed) and saves it. */
+function savePage({ values = {}, entity = null, sites, kinds, local, actor, error = null }) {
+    const v = values;
+    const site = sites[v.site] ? v.site : '';
+    return html`${crumbs([{ name: 'Reviews', url: '/' }, { name: 'Add a rating from another site' }])}
+<article class="rv-article"><h1>Add a rating from another site</h1>
+<p>Glassdoor, Indeed, Yelp, the BBB, Trustpilot, Google Maps and Tripadvisor each show a rating. Bring what one of their pages shows, and it appears beside that site on the page here, with the date and a link back. Check the numbers against the page first.</p>
+${error ? notice('error', error) : ''}
+${actor && actor.subject ? html`<form method="post" action="/save" class="rv-form">
+${entity ? html`<input type="hidden" name="entity" value="${entity.slug}"><p>For <a href="${epath(entity)}"><b>${entity.name}</b></a>${entity.description && LOCAL.has(entity.kind) ? html` <span class="rv-muted">${entity.description}</span>` : ''}</p>`
+        : html`<label>What is it? <select name="kind">${kinds.map((x) => html`<option value="${x}"${x === (v.kind || (site ? sites[site].kind : 'business')) ? raw(' selected') : ''}>${KIND_LABEL[x]}</option>`)}</select></label>
+<label>Its name <input type="text" name="name" maxlength="200" required value="${v.name || ''}"></label>
+<label>Where it is <input type="text" name="place" maxlength="120" value="${v.place || ''}" placeholder="City, and state or country"> <span class="rv-muted">Needed for ${local.map((x) => KIND_PLURAL[x].toLowerCase()).join(', ')}.</span></label>`}
+<label>The page <input type="url" name="url" maxlength="1000" required value="${v.url || ''}" placeholder="https://www.glassdoor.com/Reviews/…"> <span class="rv-muted">Its address on ${Object.values(sites).map((x) => x.name).join(', ')}.</span></label>
+<div class="rv-row"><label>Rating <input type="text" inputmode="decimal" name="value" required value="${v.value || ''}" size="5" placeholder="3.9"></label>
+<label>Out of <input type="text" inputmode="decimal" name="best" required value="${v.best || '5'}" size="4"></label>
+<label>From how many ratings <input type="text" inputmode="numeric" name="count" value="${v.count || ''}" size="9" placeholder="1,234"></label></div>
+<input type="hidden" name="via" value="${v.via === 'companion' ? 'companion' : 'form'}">
+<button type="submit">Save</button></form>
+<p class="rv-muted">Saved under your OpenVibe account; a later look of yours replaces it. Reviews never reads those sites itself.</p>`
+        : html`<p><a class="rv-button" href="/auth/login?next=${encodeURIComponent(v.next || '/save')}">Sign in with OpenVibe to add it</a></p>`}
+</article>`;
 }
 
 /** /review: name what to review; found, or added by the member. */
@@ -377,7 +411,7 @@ ${comments.length ? html`<ul class="rv-comments">${comments.map((c) => html`<li>
 ${form}</section>`;
 }
 
-function entityPage(p, { discussion, actor, flash, members = null, elsewhere = [], reviewError = null, reviewValues = null }) {
+function entityPage(p, { discussion, actor, flash, members = null, elsewhere = [], seen = {}, reviewError = null, reviewValues = null }) {
     const en = p.entity;
     const limits = [];
     for (const s of p.sources) {
@@ -405,7 +439,7 @@ ${p.sources.length ? html`<ul>${p.sources.map((s) => html`<li><strong>${s.name |
 ${limits.length ? html`<ul class="rv-limits">${limits.map((l) => html`<li>${l}</li>`)}</ul>` : ''}
 <p class="rv-muted">Coverage is what the sources above returned, nothing more: a source that samples recent reviews, one language or one shop describes that sample, not everyone's opinion.${p.open_corrections ? ` ${p.open_corrections} correction(s) are waiting for an editor.` : ''}</p>
 </section>` : ''}
-${elsewhereSection(elsewhere, en)}
+${elsewhereSection(elsewhere, en, { seen, actor, editor: p.editor })}
 ${otherNames.length || p.links.length ? html`<section><h2>Also known as and related</h2>
 ${otherNames.length ? html`<p>Also known as ${otherNames.map((a, i) => html`${i ? ', ' : ''}${a.value}`)}</p>` : ''}
 ${p.links.length ? html`<ul>${p.links.map((l) => html`<li>${l.type.replace(/_/g, ' ')}${l.direction === 'in' ? ' (from)' : ''}: ${l.other ? html`<a href="${epath(l.other)}">${l.other.name}</a>` : html`${l.ref ? `${l.ref.service} ${l.ref.type} ${l.ref.label || l.ref.id}` : ''}`}</li>`)}</ul>` : ''}</section>` : ''}
@@ -595,5 +629,5 @@ module.exports = {
     everywherePage,
     home, aboutPage, searchPage, entityPage, historyPage, summaryRevisionPage, correctionPage,
     editorHome, newEntityPage, editEntityPage, itemPage, signInPage, errorBody, epath, signalValue, KIND_LABEL,
-    reviewStartPage, kindPage, elsewhereLinks, KIND_PLURAL,
+    reviewStartPage, kindPage, elsewhereLinks, savePage, KIND_PLURAL,
 };
