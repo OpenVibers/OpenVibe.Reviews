@@ -19,6 +19,8 @@ const { createViewerResolver } = require('./auth/viewer');
 const { createApp } = require('./app');
 const { createIndexNow } = require('openvibe-shared/indexnow');
 const { gracefulStop, createHttpTelemetry } = require('openvibe-sdk/service');
+const { createNetworkSender, startSubscriptions } = require('openvibe-sdk/account-data');
+const accountDataLib = require('./reviews/account-data');
 const { createPgTelemetrySink, startTelemetryRetention } = require('openvibe-sdk/telemetry');
 
 /**
@@ -28,12 +30,13 @@ const { createPgTelemetrySink, startTelemetryRetention } = require('openvibe-sdk
  * its own database (start's `givenDb`), which stays open. `exit` and `signals` are injectable so a test can watch
  * the stop and no test process installs signal handlers.
  */
-function createLifecycle({ server, db, valkey = null, platform, timers = [], telemetry = null, retention = null, closeDb = true, exit, signals, log } = {}) {
+function createLifecycle({ server, db, valkey = null, platform, timers = [], telemetry = null, retention = null, closeDb = true, exit, signals, log, subscriptions = null } = {}) {
     return gracefulStop({
         name: 'Reviews', server, log, drainMs: 8000, deadlineMs: 10000, deadlineExitCode: 0, exit, signals,
         stop: [
             () => timers.forEach((t) => { clearInterval(t); clearTimeout(t); }),
             () => platform.outbox.stop(),
+            () => { if (subscriptions) subscriptions.stop(); },
         ],
         close: [
             async () => { if (retention) await retention.stop(); if (telemetry) await telemetry.stop(); },
@@ -43,7 +46,7 @@ function createLifecycle({ server, db, valkey = null, platform, timers = [], tel
     });
 }
 
-async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, tokens = null, publicKey = null, log = console, telemetrySink = null, listen = true, workers = listen, rateLimits = true, limitsNow = null, indexnow: givenIndexnow = undefined, signals = false, exit = () => {} } = {}) {
+async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, tokens = null, publicKey = null, log = console, telemetrySink = null, listen = true, workers = listen, rateLimits = true, limitsNow = null, indexnow: givenIndexnow = undefined, signals = false, exit = () => {}, send: givenSend = null } = {}) {
     config = config || load();
     // PostgreSQL (ADR-035): opened and migrated here unless the caller (a test) hands in a migrated handle.
     const db = givenDb || await openDb(config, { log });
@@ -65,7 +68,13 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     // on, a one-minute tick writes each interval (the collector has no timer of its own) and the table keeps 14 days.
     const telemetry = createHttpTelemetry({ service: 'reviews', sink: telemetrySink || createPgTelemetrySink({ db, log }), skipPrefixes: ['/shared'], intervalMs: 60_000 });
     let retention = null;
-    const app = createApp({ config, telemetry, svc, viewers, platform, sources, sync, keys, db, log, rateLimits, fetchImpl, limitsNow, indexnow });
+    // Account export and deletion (ADR-033): the table map over the service, and the sender to Network's internal routes
+    // with Reviews' own client-credentials token (a test hands in a stand-in).
+    const accountData = accountDataLib.create({ db, svc, log });
+    const accountSend = givenSend || (config.oauth.clientSecret
+        ? createNetworkSender({ networkInternalUrl: config.networkInternalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, fetch: fetchImpl })
+        : null);
+    const app = createApp({ config, telemetry, svc, viewers, platform, sources, sync, keys, db, log, rateLimits, fetchImpl, limitsNow, indexnow, accountData, accountSend });
 
     // Search holds whatever the current rules say (idempotent: unchanged documents are not re-sent).
     try { await svc.reconcileIndex(); } catch (err) { log.warn(`[Reviews] index reconcile: ${err.message}`); }
@@ -90,8 +99,17 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         server.keepAliveTimeout = 65000;
         log.log(`[Reviews] ${config.nodeEnv} on http://${config.host}:${config.port} → ${config.baseUrl}`);
     }
+    // The two account subscriptions at OpenVibe.Events, created when missing; off without workers, EVENTS_URL,
+    // REVIEWS_EVENTS_SECRET or the client secret.
+    let subscriptions = null;
+    if (workers && listen) {
+        subscriptions = startSubscriptions({
+            eventsUrl: config.eventsUrl, endpoint: `http://127.0.0.1:${config.port}/internal/account-events`, secret: (config.eventsWebhookSecrets || [])[0],
+            networkInternalUrl: config.networkInternalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, fetch: fetchImpl, log,
+        });
+    }
 
-    const lifecycle = createLifecycle({ server, db, telemetry, retention, platform, timers, closeDb: !givenDb, signals, exit, log });
+    const lifecycle = createLifecycle({ server, db, telemetry, retention, platform, timers, closeDb: !givenDb, signals, exit, log, subscriptions });
 
     async function stop() {
         return lifecycle.stop('stop');
