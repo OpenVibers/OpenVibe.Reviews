@@ -283,8 +283,9 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
         const members = await svc.memberReviews(e, req.actor);
         const elsewhere = views.elsewhereLinks(e);
         const seen = await svc.seenRatings(e);
+        const records = await svc.records(e);
         const signedIn = !!req.actor.subject;
-        send(req, res, status, views.entityPage(p, { discussion, actor: req.actor, flash: req.query.saved ? 'Saved.' : null, members, elsewhere, seen, reviewError, reviewValues }), {
+        send(req, res, status, views.entityPage(p, { discussion, actor: req.actor, flash: req.query.saved ? 'Saved.' : null, members, elsewhere, seen, records, reviewError, reviewValues }), {
             decision: p.decision, title: e.name, cache: discussion.state === 'ok' || signedIn ? null : 'public', path: svc.entityPath(e),
             description: e.description && !svc.LOCAL_KINDS.has(e.kind) ? e.description
                 : `${e.name}${e.description ? ` (${e.description})` : ''}: ${members.stats.count ? `${members.stats.average} out of 5 from ${members.stats.count} OpenVibe member review${members.stats.count === 1 ? '' : 's'}, ` : ''}review signals${p.sources.length ? ` from ${p.sources.map((s) => s.name || s.key).join(', ')}` : ''}, and every other review site in one place.`,

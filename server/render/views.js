@@ -17,20 +17,24 @@ const e = encodeURIComponent;
 const n = (x) => (x == null ? '' : Number(x).toLocaleString('en-US'));
 
 const KIND_LABEL = { product: 'Product', game: 'Game', software: 'Software', service: 'Service', place: 'Place', organization: 'Organization', media: 'Media', other: 'Other',
-    employer: 'Employer', landlord: 'Landlord', restaurant: 'Restaurant', business: 'Local business', hosting: 'Hosting provider', app: 'App', vehicle: 'Vehicle' };
+    employer: 'Employer', landlord: 'Landlord', restaurant: 'Restaurant', business: 'Local business', hosting: 'Hosting provider', app: 'App', vehicle: 'Vehicle',
+    community: 'Community', platform: 'Platform' };
 const KIND_PLURAL = { employer: 'Employers', landlord: 'Landlords', restaurant: 'Restaurants', business: 'Local businesses', hosting: 'Hosting providers', product: 'Products',
-    app: 'Apps', software: 'Software', game: 'Games', vehicle: 'Vehicles', service: 'Services', organization: 'Organizations', place: 'Places', media: 'Media', other: 'Other' };
+    app: 'Apps', software: 'Software', game: 'Games', vehicle: 'Vehicles', service: 'Services', organization: 'Organizations', place: 'Places', media: 'Media', other: 'Other',
+    community: 'Communities', platform: 'Platforms' };
 // How a member knew it, offered on the form (their choice, or none).
 const RELATIONS = {
     employer: ['Current employee', 'Former employee', 'Interviewed there', 'Contractor'], landlord: ['Current tenant', 'Former tenant', 'Applied to rent'],
     restaurant: ['Ate there', 'Ordered takeout', 'Ordered delivery'], business: ['Customer', 'Former customer'], hosting: ['Customer', 'Former customer', 'Tried it'],
     product: ['Own it', 'Owned it', 'Tried it'], vehicle: ['Own one', 'Owned one', 'Test-drove it', 'Rented one'], app: ['Use it', 'Used it'], software: ['Use it', 'Used it'],
     game: ['Played it'], service: ['Customer', 'Former customer'], organization: ['Customer', 'Member', 'Former member'], place: ['Visited'],
+    community: ['Member', 'Former member', 'Moderator'], platform: ['Use it', 'Used it', 'Create on it'],
 };
 const LOCAL = new Set(['restaurant', 'business', 'landlord', 'place']);
 // Which sites /everywhere offers for a kind (server/reviews/everywhere.js).
 const EW_KIND = { employer: 'employer', landlord: 'landlord', restaurant: 'business', business: 'business', place: 'business', hosting: 'hosting', product: 'product',
-    vehicle: 'product', app: 'software', software: 'software', game: 'software', service: 'company', organization: 'company', media: 'product', other: 'company' };
+    vehicle: 'product', app: 'software', software: 'software', game: 'software', service: 'company', organization: 'company', media: 'product', other: 'company',
+    community: 'company', platform: 'software' };
 const everywhere = require('../reviews/everywhere');
 const TYPE_LABEL = { recommendation: 'Recommendation', recommendation_tally: 'Recommendation count', rating: 'Rating', rating_aggregate: 'Aggregate rating' };
 const REASON_LABEL = {
@@ -223,6 +227,22 @@ ${entity ? html`<input type="hidden" name="entity" value="${entity.slug}"><p>For
 </article>`;
 }
 
+const GRADE_TEXT = { A: 'Grade A', B: 'Grade B', C: 'Grade C', N: 'Not yet graded', Z: 'Grade pending', P: 'Grade pending (reopening)' };
+
+/** What public bodies published about it: the CFPB's complaint count, NYC Health's inspections. Records, not reviews. */
+function recordsSection(rec, entity) {
+    if (!rec.complaints && !rec.inspections.length) return '';
+    const r = rec.restaurant;
+    return html`<section id="records" aria-labelledby="rec-h"><h2 id="rec-h">Official records</h2>
+${rec.complaints ? html`<div class="rv-record"><p><span class="rv-big">${n(rec.complaints.count)}</span> complaint${rec.complaints.count === 1 ? '' : 's'} about ${rec.complaints.company} in the Consumer Financial Protection Bureau's complaint database, from every year since 2011 (counted ${t(rec.complaints.as_of)}). <a href="${rec.complaints.url}" target="_blank" rel="noopener">Read them on consumerfinance.gov</a></p>
+<p class="rv-muted">These are complaints consumers sent about financial products, not findings: the CFPB does not verify them, and a company with more customers gets more.</p></div>` : ''}
+${rec.inspections.length ? html`<div class="rv-record"><p>NYC Health inspections${r && r.address ? html` of ${entity.name} at ${r.address}, ${r.boro || 'New York'}${r.zipcode ? ` ${r.zipcode}` : ''}` : ''}${r && r.cuisine ? html` (${r.cuisine})` : ''}, newest first.</p>
+<ol class="rv-inspections">${rec.inspections.map((d) => html`<li><p><b>${d.date ? t(d.date) : 'Date not stated'}</b>${d.grade ? html` · <span class="rv-grade rv-grade-${String(d.grade).toLowerCase()}">${GRADE_TEXT[d.grade] || `Grade ${d.grade}`}</span>` : ''}${d.score != null && !Number.isNaN(d.score) ? html` · score ${String(d.score)}` : ''}${d.type ? html` <span class="rv-muted">· ${d.type}</span>` : ''}</p>
+${d.violations.length ? html`<ul class="rv-violations">${d.violations.map((v) => html`<li>${v.critical ? html`<span class="rv-tag rv-critical">Critical</span> ` : ''}${v.text || v.code}</li>`)}</ul>` : html`<p class="rv-muted">${d.action || 'No violations were recorded.'}</p>`}</li>`)}</ol>
+<p class="rv-muted">From NYC Health's inspection results on NYC Open Data, as the inspector recorded them. A lower score is better (0 to 13 earns an A), and a letter grade is given only at some inspections. <a href="https://a816-health.nyc.gov/ABCEatsRestaurants/" target="_blank" rel="noopener">NYC Health's restaurant search</a></p></div>` : ''}
+</section>`;
+}
+
 /** /review: name what to review; found, or added by the member. */
 function reviewStartPage({ values = {}, kinds, local, actor, error = null }) {
     const k = values.kind || 'employer';
@@ -254,7 +274,7 @@ ${pages > 1 ? html`<nav class="rv-pager" aria-label="Pages">${page > 1 ? html`<a
 }
 
 function home({ entities, total, editor, recent = [], kinds = {} }) {
-    const browse = ['employer', 'landlord', 'restaurant', 'hosting', 'business', 'product', 'app', 'game', 'vehicle'];
+    const browse = ['employer', 'landlord', 'restaurant', 'hosting', 'business', 'organization', 'product', 'app', 'game', 'vehicle', 'community', 'platform'];
     return html`${raw(reviewsHero())}
 <section class="sc-sec" aria-labelledby="rv-kinds-h"><h2 id="rv-kinds-h">Browse and review</h2>
 <ul class="rv-kinds">${browse.map((k) => html`<li><a href="/k/${k}"><b>${KIND_PLURAL[k]}</b><span class="rv-muted">${kinds[k] ? `${n(kinds[k])} here` : 'Be the first'}</span></a></li>`)}</ul>
@@ -411,8 +431,10 @@ ${comments.length ? html`<ul class="rv-comments">${comments.map((c) => html`<li>
 ${form}</section>`;
 }
 
-function entityPage(p, { discussion, actor, flash, members = null, elsewhere = [], seen = {}, reviewError = null, reviewValues = null }) {
+function entityPage(p, { discussion, actor, flash, members = null, elsewhere = [], seen = {}, records = null, reviewError = null, reviewValues = null }) {
     const en = p.entity;
+    // Something of its own to show (members' reviews or official records): the empty source sections stay out.
+    const own = (members && members.stats.count) || (records && (records.complaints || records.inspections.length));
     const limits = [];
     for (const s of p.sources) {
         if (s.stale) limits.push(html`${s.name || s.key}: the source was stale when last checked${s.last_success_at ? html` (last successful fetch ${t(s.last_success_at)})` : ''}.`);
@@ -426,10 +448,11 @@ function entityPage(p, { discussion, actor, flash, members = null, elsewhere = [
 <header><h1>${en.name}</h1><p class="rv-muted"><span class="rv-tag">${KIND_LABEL[en.kind]}</span>${LOCAL.has(en.kind) && en.description ? html` · ${en.description}` : ''} · <a href="${epath(en)}/history">History</a> · <a href="${epath(en)}.json">JSON</a> · <a href="${epath(en)}/correct">Suggest a correction</a>${p.editor ? html` · <a href="${epath(en)}/edit">Edit</a>` : ''}</p></header>
 ${flash ? notice('ok', flash) : ''}
 ${en.description && !LOCAL.has(en.kind) ? html`<p>${en.description}</p>` : ''}
+${records ? recordsSection(records, en) : ''}
 ${members ? memberSection(members, { entity: en, actor, editor: p.editor, error: reviewError, values: reviewValues }) : ''}
 ${p.merged_from.length ? html`<p class="rv-muted">Includes the signals of ${p.merged_from.map((m, i) => html`${i ? ', ' : ''}${m.name}`)} (merged here; see <a href="${epath(en)}/history#merges">history</a>).</p>` : ''}
-${p.aggregate || p.signals.length || p.sources.length || !(members && members.stats.count) ? aggregateSection(p) : ''}
-${p.summary || p.editor || !(members && members.stats.count) ? summarySection(p) : ''}
+${p.aggregate || p.signals.length || p.sources.length || !own ? aggregateSection(p) : ''}
+${p.summary || p.editor || !own ? summarySection(p) : ''}
 ${p.signals.length || p.sources.length || p.inactive_signals.length ? html`<section><h2 id="signals">Signals from sources (${String(p.signals.length)})</h2>
 ${p.signals.length ? signalTable(p.signals, { caption: 'Signals from sources, with provenance' }) : html`<p class="rv-muted">No source has stated anything about this entity yet.</p>`}
 ${p.inactive_signals.length ? html`<p class="rv-muted">${String(p.inactive_signals.length)} earlier signal(s) were replaced or withdrawn by their sources: <a href="${epath(en)}/history#signals">history</a>.</p>` : ''}

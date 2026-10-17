@@ -35,7 +35,7 @@ const { createIndexSequencer } = require('openvibe-publishing/index-hooks');
 const seo = require('openvibe-publishing/seo');
 
 const ENTITY_KINDS = ['product', 'game', 'software', 'service', 'place', 'organization', 'media', 'other',
-    'employer', 'landlord', 'restaurant', 'business', 'hosting', 'app', 'vehicle'];   // the second row: what members review (0004)
+    'employer', 'landlord', 'restaurant', 'business', 'hosting', 'app', 'vehicle', 'community', 'platform'];   // the second row: what members review (0004, 0007)
 const ALIAS_TYPES = ['name', 'url', 'sku', 'gtin', 'mpn', 'source', 'external'];
 const SIGNAL_TYPES = ['recommendation', 'recommendation_tally', 'rating', 'rating_aggregate'];
 const LINK_TYPES = ['merged_into', 'related', 'edition_of', 'successor_of', 'part_of', 'external_ref'];

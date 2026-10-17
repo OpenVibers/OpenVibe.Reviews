@@ -134,3 +134,11 @@ code { overflow-wrap: anywhere; }
 .rv-seen b { font-size: 1.05em; }
 .rv-row { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .rv-row label { flex: 0 1 auto; }
+.rv-record + .rv-record { margin-top: 18px; }
+.rv-inspections { padding-left: 0; list-style: none; margin: 8px 0; }
+.rv-inspections > li { padding: 8px 0; border-bottom: 1px solid var(--rv-line); }
+.rv-inspections > li > p { margin: 0 0 4px; }
+.rv-violations { margin: 4px 0 0; padding-left: 18px; }
+.rv-violations li { margin: 2px 0; }
+.rv-critical { background: color-mix(in srgb, #dc2626 16%, transparent); color: inherit; }
+.rv-grade { font-weight: 700; }

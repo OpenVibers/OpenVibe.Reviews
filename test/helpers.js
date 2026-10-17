@@ -249,6 +249,6 @@ function suite(name) {
 
 module.exports = {
     boot, req, userToken, editorToken, readerToken, serviceToken, subject, cookieFor, outbox, suite,
-    fakeSources, fakeCommunity, steamItem, productItem, importItem, createEntity, deliver, sourcesEvent,
+    fakeSources, fakeCommunity, baseItem, steamItem, productItem, importItem, createEntity, deliver, sourcesEvent,
     IMPORT, EDITOR, READER, WEBHOOK_SECRET, ISSUER, publicKey, privateKey, quiet,
 };
