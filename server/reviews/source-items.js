@@ -111,18 +111,23 @@ function createSourcesSync({ db, svc, sources, config, now = () => Date.now(), l
         if (!sources.enabled) return { ok: false, reason: 'OpenVibe.Sources is not configured', done: 0 };
         let done = 0;
         let failed = 0;
-        for (const row of await q.due.all(now(), limit)) {
-            try {
-                await svc.importItem(row.item_id, sources, system);
-                await q.done.run(row.item_id);
-                done++;
-            } catch (err) {
-                // A 404/422 is final (the item is gone or unusable); anything else is retried.
-                if (err && (err.status === 404 || err.status === 422)) { await q.done.run(row.item_id); log.warn(`[Reviews] queued item ${row.item_id} dropped: ${err.message}`); continue; }
-                await q.failed.run(now() + BACKOFF_MS[Math.min(row.attempts, BACKOFF_MS.length - 1)], String(err && err.message).slice(0, 500), row.item_id);
-                failed++;
+        // The queued items in one svc.batch(), like a pulled page: 12 events for reviews of one game re-index it once.
+        // Item by item, its index documents shared one trace and Search's follow-ups were refused as a loop (2026-10-17).
+        // An item that fails rolls back alone (applyItem's transaction is a savepoint inside the batch).
+        await svc.batch(async () => {
+            for (const row of await q.due.all(now(), limit)) {
+                try {
+                    await svc.importItem(row.item_id, sources, system);
+                    await q.done.run(row.item_id);
+                    done++;
+                } catch (err) {
+                    // A 404/422 is final (the item is gone or unusable); anything else is retried.
+                    if (err && (err.status === 404 || err.status === 422)) { await q.done.run(row.item_id); log.warn(`[Reviews] queued item ${row.item_id} dropped: ${err.message}`); continue; }
+                    await q.failed.run(now() + BACKOFF_MS[Math.min(row.attempts, BACKOFF_MS.length - 1)], String(err && err.message).slice(0, 500), row.item_id);
+                    failed++;
+                }
             }
-        }
+        });
         return { ok: true, done, failed };
     }
 
