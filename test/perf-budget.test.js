@@ -12,7 +12,7 @@ const { spawn } = require('child_process');
 const { measure, check, format } = require('openvibe-shared/perf-budget');
 
 const BUDGETS = {
-    htmlRawKB: 28.5,   // measured 27.0 (fresh database; 23.7 before 2026-10-15's two more features with their ring icons, 17.8 before the showcase)
+    htmlRawKB: 30,   // measured 28.7 (fresh database; 27.0 before 2026-10-17's three more kinds to browse, 23.7 before 2026-10-15's two more features with their ring icons, 17.8 before the showcase)
     htmlBrotliKB: 7,   // 6.6 (5.9, 4.6 before the showcase)
     jsFiles: 5,   // 5 (theme-loader, web-runtime, navbar, footer, boost: openvibe-shared/shell adds web-runtime)
     jsRawKB: 257,   // 239.1 (212.2 before openvibe-shared/shell's web-runtime.js)

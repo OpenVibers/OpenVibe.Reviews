@@ -104,6 +104,16 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         kindCounts: db.prepare("SELECT kind, COUNT(*) AS n FROM review_entities WHERE state = 'active' GROUP BY kind"),
         memberReviewsSince: db.prepare('SELECT COUNT(*) AS n FROM review_member_reviews WHERE author = ? AND created_at > ?'),
         memberEntitiesSince: db.prepare('SELECT COUNT(*) AS n FROM review_entities WHERE created_by = ? AND created_at > ?'),
+        // Official records (migrations/0007).
+        recordByItem: db.prepare('SELECT * FROM review_records WHERE source_item_id = ?'),
+        insertRecord: db.prepare(`INSERT INTO review_records (id, entity_id, source_key, source_item_id, kind, occurred_on, fields, item_revision, retrieved_at, status, created_at, updated_at)
+                                  VALUES (@id, @entity_id, @source_key, @source_item_id, @kind, @occurred_on, @fields, @item_revision, @retrieved_at, 'active', @now, @now)`),
+        updateRecord: db.prepare(`UPDATE review_records SET entity_id = @entity_id, occurred_on = @occurred_on, fields = @fields, item_revision = @item_revision,
+                                         retrieved_at = @retrieved_at, status = 'active', updated_at = @now WHERE id = @id`),
+        removeRecord: db.prepare("UPDATE review_records SET status = 'removed', updated_at = ? WHERE id = ?"),
+        recordsOf: db.prepare(`SELECT kind, occurred_on, fields, retrieved_at, source_key FROM review_records WHERE entity_id = ANY(?::text[]) AND status = 'active'
+                               ORDER BY kind, occurred_on DESC NULLS LAST, retrieved_at DESC LIMIT 400`),
+        externalAlias: db.prepare("SELECT entity_id FROM review_entity_aliases WHERE type = 'external' AND norm = ? AND removed_at IS NULL LIMIT 1"),
         // Ratings other sites show, as members saw them (migrations/0006).
         seenRatingsOf: db.prepare(`SELECT site, page_url, rating_value::float8 AS rating_value, rating_best::float8 AS rating_best, rating_count, seen_at, via, id, seen_by
                                    FROM review_seen_ratings WHERE entity_id = ? AND status = 'shown' ORDER BY seen_at DESC LIMIT 200`),
@@ -517,7 +527,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
 
     // ── Members' reviews ─────────────────────────────────────
     // What members may add and review. Local kinds are told apart by their place (a city), kept as the description.
-    const MEMBER_KINDS = ['employer', 'landlord', 'restaurant', 'business', 'hosting', 'product', 'app', 'software', 'game', 'vehicle', 'service', 'organization', 'place'];
+    const MEMBER_KINDS = ['employer', 'landlord', 'restaurant', 'business', 'hosting', 'product', 'app', 'software', 'game', 'vehicle', 'service', 'organization', 'place', 'community', 'platform'];
     const LOCAL_KINDS = new Set(['restaurant', 'business', 'landlord', 'place']);
     const MEMBER_REVIEWS_PER_DAY = 30;
     const MEMBER_ENTITIES_PER_DAY = 20;
@@ -634,6 +644,12 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         if (agg && agg.result) lines.push(...agg.result.computation);
         const mem = live ? await memberStats(await closure(e.id)) : { count: 0 };
         if (mem.count) lines.push(`OpenVibe members: ${mem.average} out of 5 from ${mem.count} review${mem.count === 1 ? '' : 's'}`);
+        if (live) {
+            const rec = await recordsView(e.id);
+            if (rec.complaints) lines.push(`CFPB consumer complaints: ${rec.complaints.count} in the CFPB's database (as of ${String(rec.complaints.as_of).slice(0, 10)})`);
+            const last = rec.inspections[0];
+            if (last) lines.push(`NYC Health inspection ${last.date}: ${last.grade ? `grade ${last.grade}, ` : ''}${last.score != null ? `score ${last.score}, ` : ''}${last.violations.length} violation${last.violations.length === 1 ? '' : 's'} (${last.violations.filter((v) => v.critical).length} critical)`);
+        }
         if (live) for (const r of Object.values(await seenBySite(e.id))) lines.push(`${r.name}: ${r.value} out of ${r.best}${r.count != null ? ` from ${r.count} ratings` : ''} (seen ${r.seen_at.slice(0, 10)})`);
         const doc = hooks.buildIndexDocument({
             owner: 'reviews', type: 'entity', id: e.id, revision: 0,
@@ -898,6 +914,120 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         }
     }
 
+    // ── Official records ─────────────────────────────────────
+    // What a public body published about an entity (migrations/0007): the CFPB complaint database's count for a
+    // company, NYC Health's inspection results for a restaurant. They find their entity by an external alias
+    // (cfpb:<company>, nyc-camis:<camis>), else by its name (and place), else add it: every NYC restaurant inspected,
+    // and the companies with RECORD_MIN_COMPLAINTS or more complaints. Never signals, never in the aggregate.
+    const RECORD_KINDS = new Set(['complaint_tally', 'inspection_violation']);
+    const RECORD_MIN_COMPLAINTS = 500;
+    const BOROUGHS = { manhattan: 'Manhattan', brooklyn: 'Brooklyn', queens: 'Queens', bronx: 'Bronx', 'staten island': 'Staten Island' };
+    const SMALL_WORDS = new Set(['a', 'an', 'and', 'at', 'by', 'for', 'in', 'of', 'on', 'or', 'the', 'to', 'de', 'la', 'del', 'n']);
+    const KEEP_UPPER = /^(LLC|LLP|LP|INC|NA|N\.A\.|USA|US|U\.S\.|NY|NYC|BBQ|II|III|IV|FSB|PLC|AG|SA|BMW|HSBC|TD|USAA|PNC|BBVA|JPMORGAN|NFCU|MBA|IHOP|KFC)$/;
+    /** "CAPITAL ONE FINANCIAL CORPORATION" → "Capital One Financial Corporation"; mixed-case names stay as written. */
+    function recordName(raw) {
+        const t = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+        if (!t || /[a-z]/.test(t)) return t;
+        return t.split(' ').map((w, i) => {
+            if (KEEP_UPPER.test(w.replace(/[,.]$/, '').toUpperCase()) && !/^(INC|LLC)\.?,?$/.test(w)) return w;
+            const lower = w.toLowerCase();
+            if (i > 0 && SMALL_WORDS.has(lower)) return lower;
+            return lower.replace(/(^|[-/&(.'])([a-z])/g, (m, p1, c) => p1 + c.toUpperCase()).replace(/^Mc([a-z])/, (m, c) => `Mc${c.toUpperCase()}`).replace(/'S\b/g, "'s");
+        }).join(' ').replace(/\bInc\b/g, 'Inc.').replace(/\bInc\.\./g, 'Inc.').replace(/\bLlc\b/g, 'LLC');
+    }
+    function recordTarget(item) {
+        const f = item.fields || {};
+        if (item.kind === 'complaint_tally') {
+            const company = String(f.company || item.identity || '').trim();
+            if (!company) return null;
+            return { alias: `cfpb:${company.slice(0, 200)}`, name: recordName(company), kind: 'organization', place: null, create: Number(f.complaints) >= RECORD_MIN_COMPLAINTS };
+        }
+        const camis = String(f.camis || '').trim();
+        if (!/^\d{1,12}$/.test(camis) || !f.dba) return null;
+        const boro = BOROUGHS[String(f.boro || '').trim().toLowerCase()];
+        return { alias: `nyc-camis:${camis}`, name: recordName(f.dba), kind: 'restaurant', place: boro ? `${boro}, NY` : 'New York, NY', create: true };
+    }
+    async function recordEntity(target, actor) {
+        const norm1 = norm.alias('external', target.alias);
+        const hit = await q.externalAlias.get(norm1);
+        if (hit) return await canonicalOf(hit.entity_id);
+        const kinds = target.kind === 'organization' ? ['organization', 'employer', 'business', 'service'] : [target.kind];
+        for (const k of kinds) {
+            const same = (await q.sameNamedOfKind.all(norm.alias('name', target.name), k))
+                .filter((x) => !LOCAL_KINDS.has(k) || String(x.description || '').toLowerCase() === String(target.place || '').toLowerCase());
+            if (same.length) { const id = await canonicalOf(same[0].id); await insertAlias(id, 'external', target.alias, actor); return id; }
+        }
+        if (!target.create) return null;
+        const t = now();
+        const id = `ent_${ulid(t)}`;
+        const slug = await uniqueSlug(LOCAL_KINDS.has(target.kind) && target.place ? `${target.name} ${target.place}` : target.name);
+        await redirects.release(`/e/${slug}`);
+        await q.insertEntity.run({ id, slug, name: target.name, kind: target.kind, description: target.place, created_by: 'service:reviews', now: t });
+        await insertAlias(id, 'name', target.name, actor);
+        await insertAlias(id, 'external', target.alias, actor);
+        await audit(actor, 'entity.added_from_records', id, null, { name: target.name, kind: target.kind, place: target.place, alias: target.alias });
+        return id;
+    }
+    const dayOf = (v) => { const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v || '')); return m ? m[1] : null; };
+    /** One official-record item → its record row (created, replaced, or removed with its item). */
+    async function applyRecord(item, { sourceInfo, actor }) {
+        const prov = item.provenance;
+        return await tx(async () => {
+            await upsertSource(item.source_key, prov, sourceInfo);
+            const row = await q.recordByItem.get(item.id);
+            const t = now();
+            if (item.removed) {
+                if (!row || row.status === 'removed') return { outcome: row ? 'unchanged' : 'removed:unknown', item: null, signal: null };
+                await q.removeRecord.run(t, row.id);
+                await afterSignalChange(row.entity_id, 'record_removed');
+                return { outcome: 'removed', item: null, signal: null };
+            }
+            if (row && item.revision <= Number(row.item_revision)) return { outcome: 'unchanged', item: null, signal: null };
+            const target = recordTarget(item);
+            const entityId = target ? await recordEntity(target, actor) : null;
+            if (!entityId) return { outcome: 'unchanged', item: null, signal: null };
+            const f = item.fields || {};
+            const keep = item.kind === 'complaint_tally'
+                ? { company: String(f.company || item.identity).slice(0, 200), complaints: Number.isFinite(Number(f.complaints)) ? Number(f.complaints) : null }
+                : Object.fromEntries(['camis', 'dba', 'boro', 'building', 'street', 'zipcode', 'cuisine', 'inspection_type', 'action', 'violation_code', 'violation', 'critical_flag', 'score', 'grade']
+                    .map((k) => [k, f[k] == null ? null : String(f[k]).slice(0, 500)]));
+            const values = {
+                entity_id: entityId, occurred_on: item.kind === 'inspection_violation' ? dayOf(f.inspection_date) : null, fields: JSON.stringify(keep),
+                item_revision: item.revision, retrieved_at: new Date(prov.retrieved_at).toISOString(), now: t,
+            };
+            if (row) await q.updateRecord.run({ ...values, id: row.id });
+            else await q.insertRecord.run({ ...values, id: `rec_${ulid(t)}`, source_key: item.source_key, source_item_id: item.id, kind: item.kind });
+            await afterSignalChange(entityId, 'record');
+            return { outcome: row ? 'updated' : 'created', item: null, signal: null };
+        });
+    }
+
+    /** An entity's official records, for its page: the CFPB count, and NYC inspections grouped by day (newest first). */
+    async function recordsView(entityId) {
+        const rows = await q.recordsOf.all([...await closure(entityId)]);
+        const out = { complaints: null, inspections: [], restaurant: null };
+        const byDay = new Map();
+        for (const r of rows) {
+            const f = r.fields && typeof r.fields === 'object' ? r.fields : parse(r.fields, {});
+            if (r.kind === 'complaint_tally') {
+                if (!out.complaints || Number(f.complaints) > out.complaints.count) {
+                    out.complaints = { company: f.company, count: Number(f.complaints), as_of: r.retrieved_at,
+                        url: `https://www.consumerfinance.gov/data-research/consumer-complaints/search/?company=${encodeURIComponent(f.company)}&dateRange=All&searchField=all&tab=Map` };
+                }
+                continue;
+            }
+            if (!out.restaurant) out.restaurant = { camis: f.camis, address: [f.building, f.street].filter(Boolean).join(' ') || null, boro: f.boro, zipcode: f.zipcode, cuisine: f.cuisine };
+            const day = r.occurred_on || 'unknown';
+            if (!byDay.has(day)) byDay.set(day, { date: r.occurred_on, type: f.inspection_type, action: f.action, score: null, grade: null, violations: [] });
+            const d = byDay.get(day);
+            if (f.score != null && f.score !== '' && d.score == null) d.score = Number(f.score);
+            if (f.grade && !d.grade) d.grade = f.grade;
+            if (f.violation_code && !d.violations.some((v) => v.code === f.violation_code)) d.violations.push({ code: f.violation_code, text: f.violation, critical: f.critical_flag === 'Critical' });
+        }
+        out.inspections = [...byDay.values()].slice(0, 8);
+        return out;
+    }
+
     /**
      * Apply one Sources item (sources.item@1). Idempotent: the same item revision twice changes
      * nothing but the last-seen time. Synchronous (runs inside the caller's transaction).
@@ -906,6 +1036,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
     async function applyItem(item, { sourceInfo = null, actor = { kind: 'system', service: 'svc:reviews' } } = {}) {
         checkItem(item);
         if (item.category && item.category !== 'reviews') return { outcome: 'ignored:category', item: null, signal: null };
+        if (RECORD_KINDS.has(item.kind)) return await applyRecord(item, { sourceInfo, actor });
         const prov = item.provenance;
         const t = now();
         return await tx(async () => {
@@ -1328,6 +1459,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
 
         /** The latest look at each site for an entity (merged ones included), with how many members saw that site. */
         async seenRatings(e) { return await seenBySite(e.id); },
+        async records(e) { return await recordsView(e.id); },
 
         /**
          * A member brings the rating a page of another site states: { site?, url, value, best, count?, via } for an
