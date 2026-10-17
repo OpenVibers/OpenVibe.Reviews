@@ -104,6 +104,17 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         kindCounts: db.prepare("SELECT kind, COUNT(*) AS n FROM review_entities WHERE state = 'active' GROUP BY kind"),
         memberReviewsSince: db.prepare('SELECT COUNT(*) AS n FROM review_member_reviews WHERE author = ? AND created_at > ?'),
         memberEntitiesSince: db.prepare('SELECT COUNT(*) AS n FROM review_entities WHERE created_by = ? AND created_at > ?'),
+        // Ratings other sites show, as members saw them (migrations/0006).
+        seenRatingsOf: db.prepare(`SELECT site, page_url, rating_value::float8 AS rating_value, rating_best::float8 AS rating_best, rating_count, seen_at, via, id, seen_by
+                                   FROM review_seen_ratings WHERE entity_id = ? AND status = 'shown' ORDER BY seen_at DESC LIMIT 200`),
+        seenRatingBy: db.prepare('SELECT * FROM review_seen_ratings WHERE entity_id = ? AND site = ? AND seen_by = ?'),
+        seenRating: db.prepare('SELECT * FROM review_seen_ratings WHERE id = ?'),
+        insertSeenRating: db.prepare(`INSERT INTO review_seen_ratings (id, entity_id, site, page_url, rating_value, rating_best, rating_count, seen_by, seen_at, via)
+                                      VALUES (@id, @entity_id, @site, @page_url, @rating_value, @rating_best, @rating_count, @seen_by, @now, @via)`),
+        updateSeenRating: db.prepare(`UPDATE review_seen_ratings SET page_url = @page_url, rating_value = @rating_value, rating_best = @rating_best, rating_count = @rating_count,
+                                             seen_at = @now, via = @via, status = 'shown', removed_by = NULL, removed_reason = NULL WHERE id = @id`),
+        removeSeenRating: db.prepare("UPDATE review_seen_ratings SET status = 'removed', removed_by = ?, removed_reason = ? WHERE id = ? AND status = 'shown'"),
+        seenRatingsSince: db.prepare('SELECT COUNT(*) AS n FROM review_seen_ratings WHERE seen_by = ? AND seen_at > ?'),
         sameNamedOfKind: db.prepare(`SELECT e.* FROM review_entities e JOIN review_entity_aliases a ON a.entity_id = e.id
                                      WHERE a.type = 'name' AND a.norm = ? AND a.removed_at IS NULL AND e.kind = ? AND e.state = 'active' ORDER BY e.created_at`),
         link: db.prepare('SELECT * FROM review_entity_links WHERE id = ?'),
@@ -532,6 +543,26 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         }
         return { count, average: count ? Math.round((sum / count) * 10) / 10 : null, distribution, words };
     }
+    // Sites whose pages state a rating a member may bring here: the hosts a page must be on, and the kind it usually is.
+    const SEEN_SITES = {
+        glassdoor: { name: 'Glassdoor', host: /(^|\.)glassdoor\.[a-z.]{2,12}$/, kind: 'employer' },
+        indeed: { name: 'Indeed', host: /(^|\.)indeed\.[a-z.]{2,12}$/, kind: 'employer' },
+        yelp: { name: 'Yelp', host: /(^|\.)yelp\.[a-z.]{2,12}$/, kind: 'restaurant' },
+        bbb: { name: 'Better Business Bureau', host: /(^|\.)bbb\.org$/, kind: 'business' },
+        trustpilot: { name: 'Trustpilot', host: /(^|\.)trustpilot\.com$/, kind: 'organization' },
+        google: { name: 'Google Maps', host: /(^|\.)(google\.[a-z.]{2,12}|goo\.gl)$/, kind: 'business' },
+        tripadvisor: { name: 'Tripadvisor', host: /(^|\.)tripadvisor\.[a-z.]{2,12}$/, kind: 'restaurant' },
+    };
+    const SEEN_PER_DAY = 60;
+    /** The site a page belongs to (by its host), or null. */
+    function seenSiteOf(url) {
+        let u;
+        try { u = new URL(String(url || '')); } catch { return null; }
+        if (u.protocol !== 'https:') return null;
+        const h = u.hostname.toLowerCase();
+        return Object.keys(SEEN_SITES).find((k) => SEEN_SITES[k].host.test(h)) || null;
+    }
+
     function memberReviewView(r, actor) {
         return {
             id: r.id, rating: Number(r.rating), title: r.title, body: r.body, relation: r.relation || null,
@@ -577,6 +608,20 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
      * or a page Search already had that went away) — all on the caller's transaction handle. Returns
      * the stamped document, or null when nothing changed.
      */
+    /** Per site, the latest rating a member saw for an entity (merged ones included), with how many members saw it. */
+    async function seenBySite(entityId) {
+        const rows = [];
+        for (const id of await closure(entityId)) rows.push(...await q.seenRatingsOf.all(id));
+        const bySite = new Map();
+        for (const r of rows.sort((a, b) => Number(b.seen_at) - Number(a.seen_at))) {
+            const cur = bySite.get(r.site);
+            if (!cur) bySite.set(r.site, { site: r.site, name: SEEN_SITES[r.site].name, id: r.id, page_url: r.page_url, value: Number(r.rating_value), best: Number(r.rating_best),
+                count: r.rating_count == null ? null : Number(r.rating_count), seen_at: toIso(Number(r.seen_at)), via: r.via, members: 1, seen_by: r.seen_by });
+            else cur.members += 1;
+        }
+        return Object.fromEntries(bySite);
+    }
+
     async function syncEntity(entityId) {
         const e = await q.entity.get(entityId);
         if (!e) return null;
@@ -589,6 +634,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         if (agg && agg.result) lines.push(...agg.result.computation);
         const mem = live ? await memberStats(await closure(e.id)) : { count: 0 };
         if (mem.count) lines.push(`OpenVibe members: ${mem.average} out of 5 from ${mem.count} review${mem.count === 1 ? '' : 's'}`);
+        if (live) for (const r of Object.values(await seenBySite(e.id))) lines.push(`${r.name}: ${r.value} out of ${r.best}${r.count != null ? ` from ${r.count} ratings` : ''} (seen ${r.seen_at.slice(0, 10)})`);
         const doc = hooks.buildIndexDocument({
             owner: 'reviews', type: 'entity', id: e.id, revision: 0,
             state: e.state === 'deleted' ? 'deleted' : 'published', visibility: 'public',
@@ -1273,6 +1319,62 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                 await q.removeMemberReview.run(who, why, t, t, r.id);
                 await audit(actor, 'member_review.removed', r.entity_id, r.id, { reason: why });
                 await syncEntity(await canonicalOf(r.entity_id));
+                return { removed: true, entity_id: r.entity_id };
+            });
+        },
+
+        // Ratings other sites show, as members saw them -------------------------------------------
+        SEEN_SITES, seenSiteOf,
+
+        /** The latest look at each site for an entity (merged ones included), with how many members saw that site. */
+        async seenRatings(e) { return await seenBySite(e.id); },
+
+        /**
+         * A member brings the rating a page of another site states: { site?, url, value, best, count?, via } for an
+         * entity ref (or { kind, name, place?, website? } to find or add one, as /review does) → { entity, seen }. The
+         * page must be on that site; one row per member, site and entity (a later look replaces theirs).
+         */
+        async saveSeenRating(target, { url, value, best = 5, count = null, via = 'form' } = {}, actor) {
+            const who = requirePerson(actor, 'Saving a rating');
+            const site = seenSiteOf(url);
+            if (!site) fail(422, 'seen.invalid_page', `The page must be an https address on ${Object.values(SEEN_SITES).map((x) => x.name).join(', ')}`);
+            const v = Number(value);
+            const b = Number(best);
+            if (!Number.isFinite(b) || b <= 0 || b > 100) fail(422, 'seen.invalid_scale', 'The scale is the best rating the site gives, like 5');
+            if (!Number.isFinite(v) || v < 0 || v > b) fail(422, 'seen.invalid_value', `The rating is a number from 0 to ${b}`);
+            const n = count == null || count === '' ? null : Number(String(count).replace(/[,\s]/g, ''));
+            if (n != null && (!Number.isInteger(n) || n < 0 || n > 1e9)) fail(422, 'seen.invalid_count', 'How many ratings it is from is a whole number');
+            const how = via === 'companion' ? 'companion' : 'form';
+            const entity = typeof target === 'string' ? await entityOrFail(target) : (await svc.memberEntity({ ...target, kind: target.kind || SEEN_SITES[site].kind, url: target.website || null }, actor)).entity;
+            return await tx(async () => {
+                const e = await q.entity.get(await canonicalOf(entity.id));
+                if (!e || e.state !== 'active') fail(409, 'entity.not_active', 'That is not reviewed here any more');
+                const t = now();
+                const prior = await q.seenRatingBy.get(e.id, site, who);
+                if (!prior && (await q.seenRatingsSince.get(who, t - DAY_MS)).n >= SEEN_PER_DAY) fail(429, 'seen.daily_limit', `You can save ${SEEN_PER_DAY} ratings a day`);
+                const row = { page_url: String(url).slice(0, 1000), rating_value: v, rating_best: b, rating_count: n, now: t, via: how };
+                let id;
+                if (prior) { id = prior.id; await q.updateSeenRating.run({ ...row, id }); }
+                else { id = `srt_${ulid(t)}`; await q.insertSeenRating.run({ ...row, id, entity_id: e.id, site, seen_by: who }); }
+                await touchEntity(e.id);
+                await syncEntity(e.id);
+                await audit(actor, 'seen_rating.saved', e.id, id, { site, value: v, best: b, count: n, via: how });
+                return { entity: e, seen: { id, site, value: v, best: b, count: n } };
+            });
+        },
+
+        /** Take a saved rating down: the member who saved it, or an editor (with the reason, kept in the audit log). */
+        async removeSeenRating(id, actor, reason = null) {
+            const who = requirePerson(actor, 'Removing a rating');
+            return await tx(async () => {
+                const r = await q.seenRating.get(String(id || ''));
+                if (!r || r.status !== 'shown') fail(404, 'seen.not_found', 'No such rating');
+                const own = r.seen_by === who;
+                if (!own && !access.isEditor(actor)) fail(403, 'reviews.editor_required', 'Only the member who saved it or an editor can remove it');
+                const why = own ? 'removed by the member who saved it' : String(reason || '').trim().slice(0, 300) || 'removed by an editor';
+                await q.removeSeenRating.run(who, why, r.id);
+                await syncEntity(await canonicalOf(r.entity_id));
+                await audit(actor, 'seen_rating.removed', r.entity_id, r.id, { reason: why });
                 return { removed: true, entity_id: r.entity_id };
             });
         },

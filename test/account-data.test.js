@@ -24,6 +24,7 @@ t('export, then deletion: reviews gone and re-indexed, additions and corrections
         await req(h, 'POST', '/review', { cookie: anaC, form: { kind: 'employer', name: 'Acme Corp' } });
         await req(h, 'POST', '/e/acme-corp/reviews', { cookie: anaC, form: { rating: '4', title: 'Solid place to work', body: BODY } });
         await req(h, 'POST', '/e/acme-corp/reviews', { cookie: benC, form: { rating: '2', title: 'Burned out', body: 'Constant overtime, and the on-call rota was anything but fair to the night team.' } });
+        await req(h, 'POST', '/save', { cookie: anaC, form: { entity: 'acme-corp', url: 'https://www.glassdoor.com/Reviews/Acme-E1.htm', value: '3.9', best: '5', count: '120' } });
         const deliver = async (event, { secret = WEBHOOK_SECRET, headers = {} } = {}) => {
             const body = JSON.stringify({ event, seq: 1 });
             const r = await fetch(`${h.base}/internal/account-events`, { method: 'POST', body, headers: { 'Content-Type': 'application/json', ...signDeliveryHeaders(body, secret), ...headers } });
@@ -37,6 +38,7 @@ t('export, then deletion: reviews gone and re-indexed, additions and corrections
         const part = calls.find((c) => c.path === '/internal/account-exports/exp_01JZ0000000000000000000EX1/parts');
         const files = JSON.stringify(part.body);
         assert.ok(files.includes('reviews.json') && files.includes('Solid place to work') && files.includes('added-to-review.json'), files.slice(0, 300));
+        assert.ok(files.includes('ratings-from-other-sites.json') && files.includes('Acme-E1.htm'), 'the rating she saved');
         assert.ok(!files.includes('Burned out') && !files.includes(ben), 'nothing of Ben\'s');
 
         // Deletion: her review gone, the page re-sent to Search without it; Acme stays, made authorless.
@@ -54,6 +56,8 @@ t('export, then deletion: reviews gone and re-indexed, additions and corrections
         const conf = calls.filter((c) => c.path === '/internal/account-deletions/del_01JZ0000000000000000000DE1/confirmations');
         assert.strictEqual(conf.length, 1);
         assert.strictEqual(conf[0].body.erased.review_member_reviews, 1);
+        assert.strictEqual(conf[0].body.erased.review_seen_ratings, 1);
+        assert.ok(!/rv-seen/.test(page.text), 'the rating she saved is gone from the page');
         // A redelivery erases nothing twice.
         assert.strictEqual((await deliver(del)).json.outcome, 'unchanged');
         // Signed wrong or relayed from outside: refused.
