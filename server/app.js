@@ -42,7 +42,7 @@ function lagged(read, initial) {
     };
 }
 
-function createApp({ config, telemetry = null, svc, viewers, platform, sources, sync, keys, db, log = console, rateLimits = true, fetchImpl = globalThis.fetch, limitsNow = null, indexnow = null }) {
+function createApp({ config, telemetry = null, svc, viewers, platform, sources, sync, keys, db, log = console, rateLimits = true, fetchImpl = globalThis.fetch, limitsNow = null, indexnow = null, accountData = null, accountSend = null }) {
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy);
@@ -102,6 +102,13 @@ function createApp({ config, telemetry = null, svc, viewers, platform, sources, 
     // GET /<key>.txt — the IndexNow key file (mounted only when a key is configured; it serves itself).
     if (indexnow && indexnow.enabled) app.use(indexnow.keyFile);
 
+    // Account export and deletion (ADR-033): network.account.export_requested and network.account.deleted, signed by
+    // Events (v2) and answered by openvibe-sdk/account-data over reviews/account-data.js. Its own path: /internal/events
+    // is the Sources consumer.
+    if (accountData) {
+        const send = accountSend || (async () => { throw new Error('OV_OAUTH_CLIENT_SECRET is not set: Reviews cannot answer account events'); });
+        app.post('/internal/account-events', accountData.consumer({ secrets: config.eventsWebhookSecrets || [], send, log }));
+    }
     // Signed deliveries from OpenVibe.Events. Loopback/internal only in nginx (not proxied publicly).
     const consumer = createEvents({ db, svc, sync, config, log });
     app.use('/internal', http.middleware(), consumer.router);
