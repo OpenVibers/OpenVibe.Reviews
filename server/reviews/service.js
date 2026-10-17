@@ -141,6 +141,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         recordsOf: db.prepare(`SELECT kind, occurred_on, fields, retrieved_at, source_key FROM review_records WHERE entity_id = ANY(?::text[]) AND status = 'active'
                                ORDER BY kind, occurred_on DESC NULLS LAST, retrieved_at DESC LIMIT 400`),
         externalAlias: db.prepare("SELECT entity_id FROM review_entity_aliases WHERE type = 'external' AND norm = ? AND removed_at IS NULL LIMIT 1"),
+        externalOfScheme: db.prepare("SELECT 1 FROM review_entity_aliases WHERE entity_id = ? AND type = 'external' AND norm LIKE ? AND removed_at IS NULL LIMIT 1"),
         // Ratings other sites show, as members saw them (migrations/0006).
         seenRatingsOf: db.prepare(`SELECT site, page_url, rating_value::float8 AS rating_value, rating_best::float8 AS rating_best, rating_count, seen_at, via, id, seen_by
                                    FROM review_seen_ratings WHERE entity_id = ? AND status = 'shown' ORDER BY seen_at DESC LIMIT 200`),
@@ -959,16 +960,25 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         const camis = String(f.camis || '').trim();
         if (!/^\d{1,12}$/.test(camis) || !f.dba) return null;
         const boro = BOROUGHS[String(f.boro || '').trim().toLowerCase()];
-        return { alias: `nyc-camis:${camis}`, name: recordName(f.dba), kind: 'restaurant', place: boro ? `${boro}, NY` : 'New York, NY', create: true };
+        // The street address is part of the place: a chain has many restaurants of one name in one borough.
+        const street = [String(f.building || '').trim(), recordName(String(f.street || '').trim())].filter(Boolean).join(' ');
+        return { alias: `nyc-camis:${camis}`, name: recordName(f.dba), kind: 'restaurant', place: `${street ? `${street}, ` : ''}${boro || 'New York'}, NY`.slice(0, 120), create: true };
     }
     async function recordEntity(target, actor) {
         const norm1 = norm.alias('external', target.alias);
         const hit = await q.externalAlias.get(norm1);
         if (hit) return await canonicalOf(hit.entity_id);
         const kinds = target.kind === 'organization' ? ['organization', 'employer', 'business', 'service'] : [target.kind];
+        // A same-named entity takes the record only when no record of the same register is on it already: two NYC
+        // restaurants (or two CFPB companies) are never one entity.
+        const scheme = `${target.alias.slice(0, target.alias.indexOf(':') + 1)}%`;
         for (const k of kinds) {
-            const same = (await q.sameNamedOfKind.all(norm.alias('name', target.name), k))
-                .filter((x) => !LOCAL_KINDS.has(k) || String(x.description || '').toLowerCase() === String(target.place || '').toLowerCase());
+            const same = [];
+            for (const x of await q.sameNamedOfKind.all(norm.alias('name', target.name), k)) {
+                if (LOCAL_KINDS.has(k) && String(x.description || '').toLowerCase() !== String(target.place || '').toLowerCase()) continue;
+                if (await q.externalOfScheme.get(x.id, scheme)) continue;
+                same.push(x);
+            }
             if (same.length) { const id = await canonicalOf(same[0].id); await insertAlias(id, 'external', target.alias, actor); return id; }
         }
         if (!target.create) return null;

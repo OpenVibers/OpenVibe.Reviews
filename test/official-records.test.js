@@ -59,14 +59,23 @@ t('CFPB counts and NYC inspections land on entities, shown as official records, 
         const clean = nyc({ inspection_date: '2026-10-15T00:00:00.000', inspection_type: 'Cycle Inspection / Re-inspection', action: 'No violations were recorded at the time of this inspection.', score: '7', grade: 'A', critical_flag: 'Not Applicable' });
         await importItem(h, clean);
         const rest = await h.db.prepare("SELECT slug, name, kind, description FROM review_entities WHERE kind = 'restaurant'").all();
-        assert.deepStrictEqual(rest.map((e) => [e.slug, e.name, e.description]), [['the-coffee-club-brooklyn-ny', 'The Coffee Club', 'Brooklyn, NY']]);
-        const rp = await req(h, 'GET', '/e/the-coffee-club-brooklyn-ny');
+        assert.deepStrictEqual(rest.map((e) => [e.slug, e.name, e.description]), [['the-coffee-club-9526-4-avenue-brooklyn-ny', 'The Coffee Club', '9526 4 Avenue, Brooklyn, NY']]);
+        const rp = await req(h, 'GET', '/e/the-coffee-club-9526-4-avenue-brooklyn-ny');
         assert.match(rp.text, /NYC Health inspections of The Coffee Club at 9526 4 AVENUE, Brooklyn 11209 \(Coffee\/Tea\), newest first/);
         const firstLi = rp.text.indexOf('rv-grade-a'), olderLi = rp.text.indexOf('Food contact surface not properly washed.');
         assert.ok(firstLi > 0 && olderLi > firstLi, 'the newest inspection (grade A) comes first');
         assert.match(rp.text, /<span class="rv-tag rv-critical">Critical<\/span> Food contact surface not properly washed\./);
         assert.match(rp.text, /score 20/);
         assert.match(rp.text, /No violations were recorded at the time of this inspection\./);
+
+        // Two restaurants of one chain in one borough stay two (their own address and inspections each).
+        await importItem(h, nyc({ camis: '40000001', dba: 'STARBUCKS', boro: 'Manhattan', building: '38', street: 'PARK ROW', zipcode: '10038', inspection_date: '2026-10-14T00:00:00.000', violation_code: '04N', violation: 'Flies.' }));
+        await importItem(h, nyc({ camis: '40000002', dba: 'STARBUCKS', boro: 'Manhattan', building: '1', street: 'BROADWAY', zipcode: '10004', inspection_date: '2026-10-13T00:00:00.000', violation_code: '10F', violation: 'Surface.' }));
+        await importItem(h, nyc({ camis: '40000001', dba: 'STARBUCKS', boro: 'Manhattan', building: '38', street: 'PARK ROW', zipcode: '10038', inspection_date: '2026-10-14T00:00:00.000', violation_code: '06C', violation: 'Food not protected.' }));
+        const sb = await h.db.prepare("SELECT slug, description FROM review_entities WHERE name = 'Starbucks' ORDER BY slug").all();
+        assert.deepStrictEqual(sb.map((e) => e.description), ['1 Broadway, Manhattan, NY', '38 Park Row, Manhattan, NY']);
+        const parkRow = (await req(h, 'GET', '/e/starbucks-38-park-row-manhattan-ny')).text;
+        assert.ok(parkRow.includes('Flies.') && parkRow.includes('Food not protected.') && !parkRow.includes('Surface.'), 'each keeps its own inspections');
 
         // Search carries the facts.
         const docs = (await outbox(h)).filter((x) => x.event_type === 'reviews.index_document.upserted');
@@ -76,7 +85,7 @@ t('CFPB counts and NYC inspections land on entities, shown as official records, 
         // The source removes the clean inspection's row: the page goes back to the older inspection.
         h.sources.put({ ...clean, revision: 2, removed: { at: new Date().toISOString(), reason: 'withdrawn by the city' } });
         assert.strictEqual((await req(h, 'POST', '/api/v1/signals/import', { token: require('./helpers').IMPORT(), body: { source_item_id: clean.id } })).status, 200);
-        assert.ok(!/rv-grade-a/.test((await req(h, 'GET', '/e/the-coffee-club-brooklyn-ny')).text));
+        assert.ok(!/rv-grade-a/.test((await req(h, 'GET', '/e/the-coffee-club-9526-4-avenue-brooklyn-ny')).text));
 
         // /k/organization and /k/restaurant list them; the home offers both kinds and the new ones.
         // Lists order by members' reviews, then by the records, and say what the record is.
