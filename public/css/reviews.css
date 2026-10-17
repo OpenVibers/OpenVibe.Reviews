@@ -20,8 +20,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .rv-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .rv-bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; max-width: 1100px; margin: 0 auto; padding: 12px 16px; border-bottom: 1px solid var(--rv-line); }
 .rv-brand { font-weight: 700; color: var(--rv-text); text-decoration: none; }
-.rv-search { display: flex; gap: 6px; flex: 1 1 240px; }
-.rv-search input { flex: 1; min-width: 0; }
+.rv-search { display: flex; gap: 6px; flex: 1 1 240px; min-width: 0; }   /* min-width 0: it overflowed a 320px phone */
+.rv-search input { flex: 1; min-width: 0; width: 100%; }
 .rv-account { font-size: 14px; color: var(--rv-muted); }
 .rv-main { max-width: 1100px; margin: 0 auto; padding: 16px 16px 48px; overflow-wrap: anywhere; }
 h1 { font-size: 1.9rem; line-height: 1.25; margin: .4em 0 .3em; }
