@@ -180,7 +180,7 @@ function createSessionRoutes({ config, viewers, fetchImpl = globalThis.fetch, lo
 
     router.get('/me', async (req, res) => {
         const actor = await viewers.resolve(req, { services: false }).catch(() => null);
-        if (!actor || actor.kind !== 'user') return res.status(401).json({ error: 'Not authenticated' });
+        if (!actor || actor.kind !== 'user') return res.json({ user: null });   // signed out: 200 with no user (as Blog, Community, Wiki), not a 401 in every signed-out visitor's console
         res.set('Cache-Control', cache.htmlHeaders({ private: true })).json({ user: actor.user });
     });
 
