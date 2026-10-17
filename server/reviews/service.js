@@ -80,6 +80,32 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         nameAliases: db.prepare("SELECT * FROM review_entity_aliases WHERE type = 'name' AND norm = ? AND removed_at IS NULL"),
         insertAlias: db.prepare(`INSERT INTO review_entity_aliases (id, entity_id, type, value, norm, created_by, created_at) VALUES (@id, @entity_id, @type, @value, @norm, @by, @now)`),
         removeAlias: db.prepare('UPDATE review_entity_aliases SET removed_at = ?, removed_by = ? WHERE id = ? AND removed_at IS NULL'),
+        // Members' own reviews (migrations/0004): one per person per entity, beside the source signals.
+        memberReviewsOf: db.prepare("SELECT * FROM review_member_reviews WHERE entity_id = ? AND status = 'published' ORDER BY created_at DESC LIMIT ?"),
+        memberStatsOf: db.prepare(`SELECT COUNT(*) AS n, AVG(rating)::float8 AS avg,
+                                          COUNT(*) FILTER (WHERE rating = 1) AS r1, COUNT(*) FILTER (WHERE rating = 2) AS r2, COUNT(*) FILTER (WHERE rating = 3) AS r3,
+                                          COUNT(*) FILTER (WHERE rating = 4) AS r4, COUNT(*) FILTER (WHERE rating = 5) AS r5,
+                                          COALESCE(SUM(array_length(regexp_split_to_array(trim(body), '\\s+'), 1)), 0) AS words
+                                   FROM review_member_reviews WHERE entity_id = ? AND status = 'published'`),
+        memberReview: db.prepare('SELECT * FROM review_member_reviews WHERE id = ?'),
+        memberReviewBy: db.prepare('SELECT * FROM review_member_reviews WHERE entity_id = ? AND author = ?'),
+        insertMemberReview: db.prepare(`INSERT INTO review_member_reviews (id, entity_id, author, author_name, rating, title, body, relation, created_at, updated_at)
+                                        VALUES (@id, @entity_id, @author, @author_name, @rating, @title, @body, @relation, @now, @now)`),
+        updateMemberReview: db.prepare(`UPDATE review_member_reviews SET rating = @rating, title = @title, body = @body, relation = @relation, author_name = @author_name,
+                                               status = 'published', removed_by = NULL, removed_reason = NULL, removed_at = NULL, updated_at = @now WHERE id = @id`),
+        removeMemberReview: db.prepare("UPDATE review_member_reviews SET status = 'removed', removed_by = ?, removed_reason = ?, removed_at = ?, updated_at = ? WHERE id = ? AND status = 'published'"),
+        recentMemberReviews: db.prepare(`SELECT r.*, e.slug AS entity_slug, e.name AS entity_name, e.kind AS entity_kind, e.description AS entity_place
+                                         FROM review_member_reviews r JOIN review_entities e ON e.id = r.entity_id
+                                         WHERE r.status = 'published' AND e.state = 'active' ORDER BY r.created_at DESC LIMIT ?`),
+        entitiesOfKind: db.prepare(`SELECT e.*, (SELECT COUNT(*) FROM review_member_reviews m WHERE m.entity_id = e.id AND m.status = 'published') AS member_count,
+                                           (SELECT AVG(m.rating)::float8 FROM review_member_reviews m WHERE m.entity_id = e.id AND m.status = 'published') AS member_avg
+                                    FROM review_entities e WHERE e.state = 'active' AND e.kind = ? ORDER BY member_count DESC, e.updated_at DESC LIMIT ? OFFSET ?`),
+        countOfKind: db.prepare("SELECT COUNT(*) AS n FROM review_entities WHERE state = 'active' AND kind = ?"),
+        kindCounts: db.prepare("SELECT kind, COUNT(*) AS n FROM review_entities WHERE state = 'active' GROUP BY kind"),
+        memberReviewsSince: db.prepare('SELECT COUNT(*) AS n FROM review_member_reviews WHERE author = ? AND created_at > ?'),
+        memberEntitiesSince: db.prepare('SELECT COUNT(*) AS n FROM review_entities WHERE created_by = ? AND created_at > ?'),
+        sameNamedOfKind: db.prepare(`SELECT e.* FROM review_entities e JOIN review_entity_aliases a ON a.entity_id = e.id
+                                     WHERE a.type = 'name' AND a.norm = ? AND a.removed_at IS NULL AND e.kind = ? AND e.state = 'active' ORDER BY e.created_at`),
         link: db.prepare('SELECT * FROM review_entity_links WHERE id = ?'),
         linksFrom: db.prepare("SELECT * FROM review_entity_links WHERE from_entity = ? AND ended_at IS NULL AND type != 'merged_into' ORDER BY created_at"),
         linksTo: db.prepare("SELECT * FROM review_entity_links WHERE to_entity = ? AND ended_at IS NULL AND type != 'merged_into' ORDER BY created_at"),
@@ -478,6 +504,42 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         return out;
     }
 
+    // ── Members' reviews ─────────────────────────────────────
+    // What members may add and review. Local kinds are told apart by their place (a city), kept as the description.
+    const MEMBER_KINDS = ['employer', 'landlord', 'restaurant', 'business', 'hosting', 'product', 'app', 'software', 'game', 'vehicle', 'service', 'organization', 'place'];
+    const LOCAL_KINDS = new Set(['restaurant', 'business', 'landlord', 'place']);
+    const MEMBER_REVIEWS_PER_DAY = 30;
+    const MEMBER_ENTITIES_PER_DAY = 20;
+
+    function requirePerson(actor, what) {
+        if (!access.isPerson(actor)) fail(403, 'reviews.person_required', `${what} needs a signed-in OpenVibe account`);
+        return actor.subject;
+    }
+    function memberName(actor) {
+        const u = actor && actor.user;
+        return u ? String(u.display_name || u.username || '').trim().slice(0, 60) || null : null;
+    }
+    /** Members' numbers over a set of entity ids (a canonical entity and the ones merged into it). */
+    async function memberStats(ids) {
+        let count = 0, sum = 0, words = 0;
+        const distribution = [0, 0, 0, 0, 0];
+        for (const id of ids) {
+            const r = await q.memberStatsOf.get(id);
+            const n = Number(r.n) || 0;
+            if (!n) continue;
+            count += n; sum += (Number(r.avg) || 0) * n; words += Number(r.words) || 0;
+            [r.r1, r.r2, r.r3, r.r4, r.r5].forEach((v, i) => { distribution[i] += Number(v) || 0; });
+        }
+        return { count, average: count ? Math.round((sum / count) * 10) / 10 : null, distribution, words };
+    }
+    function memberReviewView(r, actor) {
+        return {
+            id: r.id, rating: Number(r.rating), title: r.title, body: r.body, relation: r.relation || null,
+            author_name: r.author_name || 'An OpenVibe member', created_at: toIso(Number(r.created_at)), updated_at: toIso(Number(r.updated_at)),
+            edited: Number(r.updated_at) > Number(r.created_at) + 60000, mine: !!(actor && actor.subject && actor.subject === r.author),
+        };
+    }
+
     // ── The gate, the Search document ────────────────────────
     async function publishedSummaryRevision(entityId) {
         const s = await q.summary.get(entityId);
@@ -490,12 +552,14 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         const active = await activeSignalsIn(members);
         const { summary, rev } = await publishedSummaryRevision(e.id);
         const rec = rev && rev.meta && rev.meta.authorship;
+        // Members' reviews count as substance: their words (from three reviews up) and each review as a citation.
+        const mem = await memberStats(members);
         return {
             state: e.state === 'deleted' ? 'deleted' : 'published',
             visibility: 'public',
             canonicalUrl: entityUrl(e),
-            wordCount: rev ? ssr.wordCount(summaryText(rev)) : 0,
-            citationCount: active.length,
+            wordCount: (rev ? ssr.wordCount(summaryText(rev)) : 0) + (mem.count >= 3 ? mem.words : 0),
+            citationCount: active.length + mem.count,
             unsupportedClaims: rev ? await unsupportedCount(e.id, rev) : 0,
             noindex: !!e.noindex,
             ...(rec ? authorship.gateFacts(rec, await reviews.latest(summary.id, rev.number)) : {}),
@@ -523,6 +587,8 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         const signals = live ? await activeSignalsIn(await closure(e.id)) : [];
         const lines = [];
         if (agg && agg.result) lines.push(...agg.result.computation);
+        const mem = live ? await memberStats(await closure(e.id)) : { count: 0 };
+        if (mem.count) lines.push(`OpenVibe members: ${mem.average} out of 5 from ${mem.count} review${mem.count === 1 ? '' : 's'}`);
         const doc = hooks.buildIndexDocument({
             owner: 'reviews', type: 'entity', id: e.id, revision: 0,
             state: e.state === 'deleted' ? 'deleted' : 'published', visibility: 'public',
@@ -1111,6 +1177,118 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                 return { entity: await q.entity.get(id), settled_items: settled };
             });
         },
+
+        // Members' reviews ---------------------------------------------------------------------
+        MEMBER_KINDS, LOCAL_KINDS,
+
+        /** Reviews by OpenVibe members of an entity (merged ones included): their numbers, the newest first, the viewer's own. */
+        async memberReviews(e, actor, { limit = 50 } = {}) {
+            const ids = await closure(e.id);
+            const rows = [];
+            for (const id of ids) rows.push(...await q.memberReviewsOf.all(id, limit));
+            rows.sort((a, b) => Number(b.created_at) - Number(a.created_at));
+            const mine = actor && actor.subject ? await q.memberReviewBy.get(e.id, actor.subject) : null;
+            return { stats: await memberStats(ids), reviews: rows.slice(0, limit).map((r) => memberReviewView(r, actor)), mine: mine && mine.status === 'published' ? memberReviewView(mine, actor) : null };
+        },
+
+        /**
+         * What a member wants to review, found or added: { kind, name, place?, url? } → { entity, created }. The same
+         * thing is found by its website, else by its name and kind (and place, for local kinds); otherwise it is added
+         * with the member as its creator, and an editor can merge a duplicate later.
+         */
+        async memberEntity({ kind, name, place = null, url = null } = {}, actor) {
+            const who = requirePerson(actor, 'Adding something to review');
+            if (!MEMBER_KINDS.includes(kind)) fail(422, 'entity.invalid_kind', `kind is one of ${MEMBER_KINDS.join(', ')}`);
+            const clean = checkName(name);
+            const where = place ? String(place).replace(/\s+/g, ' ').trim().slice(0, 120) || null : null;
+            if (LOCAL_KINDS.has(kind) && !where) fail(422, 'entity.place_required', 'Say where it is: a city, and a state or country');
+            let site = null;
+            if (url && String(url).trim()) {
+                try {
+                    const raw = String(url).trim();
+                    const u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+                    if (!/^https?:$/.test(u.protocol) || !u.hostname.includes('.')) throw new Error('not a web address');
+                    site = `https://${u.hostname.toLowerCase().replace(/^www\./, '')}/`;
+                } catch { fail(422, 'entity.invalid_url', 'The website is a web address like example.com'); }
+            }
+            return await tx(async () => {
+                if (site) {
+                    const a = await q.strongAlias.get('url', norm.alias('url', site));
+                    if (a) return { entity: await q.entity.get(await canonicalOf(a.entity_id)), created: false };
+                }
+                const same = (await q.sameNamedOfKind.all(norm.alias('name', clean), kind))
+                    .filter((x) => !LOCAL_KINDS.has(kind) || String(x.description || '').toLowerCase() === String(where || '').toLowerCase());
+                if (same.length) return { entity: await q.entity.get(await canonicalOf(same[0].id)), created: false };
+                const t = now();
+                if ((await q.memberEntitiesSince.get(who, t - DAY_MS)).n >= MEMBER_ENTITIES_PER_DAY) fail(429, 'entity.member_limit', `You can add ${MEMBER_ENTITIES_PER_DAY} things a day`);
+                const id = `ent_${ulid(t)}`;
+                const slug = await uniqueSlug(LOCAL_KINDS.has(kind) ? `${clean} ${where}` : clean);
+                await redirects.release(`/e/${slug}`);
+                await q.insertEntity.run({ id, slug, name: clean, kind, description: where, created_by: who, now: t });
+                await insertAlias(id, 'name', clean, actor);
+                if (site) await insertAlias(id, 'url', site, actor);
+                await audit(actor, 'entity.added_by_member', id, null, { name: clean, kind, place: where, url: site });
+                await syncEntity(id);
+                return { entity: await q.entity.get(id), created: true };
+            });
+        },
+
+        /** Write, or rewrite, the viewer's review of an entity: { rating 1–5, title, body, relation? }. */
+        async writeMemberReview(ref, { rating, title, body, relation = null } = {}, actor) {
+            const who = requirePerson(actor, 'Writing a review');
+            const r = Number(rating);
+            if (!Number.isInteger(r) || r < 1 || r > 5) fail(422, 'review.invalid_rating', 'Pick a rating from 1 to 5 stars');
+            const tt = String(title == null ? '' : title).replace(/\s+/g, ' ').trim();
+            if (!tt || tt.length > 120) fail(422, 'review.invalid_title', 'Give it a title of up to 120 characters');
+            const bb = String(body == null ? '' : body).replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+            if (bb.length < 30 || bb.length > 5000) fail(422, 'review.invalid_body', 'Say what it was like in 30 to 5,000 characters');
+            const rel = relation ? String(relation).replace(/\s+/g, ' ').trim().slice(0, 60) || null : null;
+            return await tx(async () => {
+                const e = await entityOrFail(ref);
+                if (e.state !== 'active') fail(409, 'entity.not_active', `This entity is ${e.state}`);
+                const t = now();
+                const prior = await q.memberReviewBy.get(e.id, who);
+                if (!prior && (await q.memberReviewsSince.get(who, t - DAY_MS)).n >= MEMBER_REVIEWS_PER_DAY) fail(429, 'review.daily_limit', `You can write ${MEMBER_REVIEWS_PER_DAY} reviews a day`);
+                const row = { rating: r, title: tt, body: bb, relation: rel, author_name: memberName(actor), now: t };
+                let id;
+                if (prior) { id = prior.id; await q.updateMemberReview.run({ ...row, id }); }
+                else { id = `mrv_${ulid(t)}`; await q.insertMemberReview.run({ ...row, id, entity_id: e.id, author: who }); }
+                await touchEntity(e.id);
+                await audit(actor, prior ? 'member_review.edited' : 'member_review.written', e.id, id, { rating: r });
+                await syncEntity(await canonicalOf(e.id));
+                return memberReviewView(await q.memberReview.get(id), actor);
+            });
+        },
+
+        /** Take a review down: its author, or an editor (with the reason, kept in the audit log). */
+        async removeMemberReview(id, actor, reason = null) {
+            const who = requirePerson(actor, 'Removing a review');
+            return await tx(async () => {
+                const r = await q.memberReview.get(String(id || ''));
+                if (!r || r.status !== 'published') fail(404, 'review.not_found', 'No such review');
+                const own = r.author === who;
+                if (!own && !access.isEditor(actor)) fail(403, 'reviews.editor_required', 'Only its author or an editor can remove a review');
+                const why = own ? 'removed by its author' : String(reason || '').trim().slice(0, 300) || 'removed by an editor';
+                const t = now();
+                await q.removeMemberReview.run(who, why, t, t, r.id);
+                await audit(actor, 'member_review.removed', r.entity_id, r.id, { reason: why });
+                await syncEntity(await canonicalOf(r.entity_id));
+                return { removed: true, entity_id: r.entity_id };
+            });
+        },
+
+        async recentMemberReviews(limit = 8) {
+            return (await q.recentMemberReviews.all(limit)).map((r) => ({ ...memberReviewView(r, null), entity: { slug: r.entity_slug, name: r.entity_name, kind: r.entity_kind, place: r.entity_place } }));
+        },
+        async entitiesOfKind(kind, { limit = 60, offset = 0 } = {}) {
+            if (!ENTITY_KINDS.includes(kind)) fail(404, 'kind.not_found', 'No such kind');
+            const rows = await q.entitiesOfKind.all(kind, limit, offset);
+            return {
+                total: Number((await q.countOfKind.get(kind)).n),
+                entities: rows.map((x) => ({ ...x, member_count: Number(x.member_count) || 0, member_avg: x.member_avg == null ? null : Math.round(Number(x.member_avg) * 10) / 10 })),
+            };
+        },
+        async kindCounts() { return Object.fromEntries((await q.kindCounts.all()).map((x) => [x.kind, Number(x.n)])); },
 
         async updateEntity(ref, { name, kind, description, slug, noindex } = {}, actor) {
             requireEditorPerson(actor, 'Editing an entity');

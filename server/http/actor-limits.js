@@ -74,6 +74,10 @@ const BUDGETS = {
     'reviews.correction.resolve': { minute: 30, hour: 300 },
     // A discussion comment goes to OpenVibe.Community in the person's name (Community allows 20 a minute).
     'reviews.discussion.comment': { minute: 20, hour: 300 },
+    // A member's own review, written or rewritten (the service also caps new ones at 30 a day).
+    'reviews.review.write': { minute: 6, hour: 40 },
+    // A member adding something to review (the service caps it at 20 a day).
+    'reviews.entity.suggest': { minute: 4, hour: 25 },
 };
 
 /**

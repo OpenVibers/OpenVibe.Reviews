@@ -18,8 +18,8 @@ const BUDGETS = {
     jsRawKB: 257,   // 239.1 (212.2 before openvibe-shared/shell's web-runtime.js)
     jsBrotliKB: 61.5,   // 56.3 (49.9 before web-runtime.js)
     cssFiles: 2,   // 2 (reviews.css, openvibe-shared showcase.css)
-    cssRawKB: 20.5,   // 19.4 (18.2 before 2026-10-15's scoreboard, 6.7 before showcase.css)
-    cssBrotliKB: 5,   // 4.6 (4.3, 1.7 before showcase.css)
+    cssRawKB: 23,   // 22.1 with members' reviews, kinds and other review sites (2026-10-17); 19.4 (18.2 before 2026-10-15's scoreboard, 6.7 before showcase.css)
+    cssBrotliKB: 5.5,   // 5.1 with members' reviews (2026-10-17); 4.6 (4.3, 1.7 before showcase.css)
     externalFiles: 1,   // 0
 };
 

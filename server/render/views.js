@@ -3,9 +3,9 @@
  * Page bodies. Every interpolated value goes through openvibe-publishing/ssr's html`` (escaped
  * unless raw()). Forms are plain HTML posts; nothing here needs JavaScript.
  *
- * Numbers shown here come from review_signals (with their provenance) or from the aggregate
- * computed over them. There is no place in these templates that prints a rating from anywhere
- * else, and no star glyphs: values are printed as the source stated them.
+ * Numbers shown here come from review_signals (with their provenance), from the aggregate computed over them, or from
+ * reviews OpenVibe members wrote here (1 to 5 stars, always labelled as theirs and never mixed into the sources'
+ * aggregate). Source values are printed as the source stated them, without star glyphs.
  */
 const ssr = require('openvibe-publishing/ssr');
 const showcase = require('openvibe-shared/showcase');
@@ -16,7 +16,22 @@ const tl = (v) => raw(ssr.timeTag(v, { label: v ? new Date(v).toISOString().repl
 const e = encodeURIComponent;
 const n = (x) => (x == null ? '' : Number(x).toLocaleString('en-US'));
 
-const KIND_LABEL = { product: 'Product', game: 'Game', software: 'Software', service: 'Service', place: 'Place', organization: 'Organization', media: 'Media', other: 'Other' };
+const KIND_LABEL = { product: 'Product', game: 'Game', software: 'Software', service: 'Service', place: 'Place', organization: 'Organization', media: 'Media', other: 'Other',
+    employer: 'Employer', landlord: 'Landlord', restaurant: 'Restaurant', business: 'Local business', hosting: 'Hosting provider', app: 'App', vehicle: 'Vehicle' };
+const KIND_PLURAL = { employer: 'Employers', landlord: 'Landlords', restaurant: 'Restaurants', business: 'Local businesses', hosting: 'Hosting providers', product: 'Products',
+    app: 'Apps', software: 'Software', game: 'Games', vehicle: 'Vehicles', service: 'Services', organization: 'Organizations', place: 'Places', media: 'Media', other: 'Other' };
+// How a member knew it, offered on the form (their choice, or none).
+const RELATIONS = {
+    employer: ['Current employee', 'Former employee', 'Interviewed there', 'Contractor'], landlord: ['Current tenant', 'Former tenant', 'Applied to rent'],
+    restaurant: ['Ate there', 'Ordered takeout', 'Ordered delivery'], business: ['Customer', 'Former customer'], hosting: ['Customer', 'Former customer', 'Tried it'],
+    product: ['Own it', 'Owned it', 'Tried it'], vehicle: ['Own one', 'Owned one', 'Test-drove it', 'Rented one'], app: ['Use it', 'Used it'], software: ['Use it', 'Used it'],
+    game: ['Played it'], service: ['Customer', 'Former customer'], organization: ['Customer', 'Member', 'Former member'], place: ['Visited'],
+};
+const LOCAL = new Set(['restaurant', 'business', 'landlord', 'place']);
+// Which sites /everywhere offers for a kind (server/reviews/everywhere.js).
+const EW_KIND = { employer: 'employer', landlord: 'landlord', restaurant: 'business', business: 'business', place: 'business', hosting: 'hosting', product: 'product',
+    vehicle: 'product', app: 'software', software: 'software', game: 'software', service: 'company', organization: 'company', media: 'product', other: 'company' };
+const everywhere = require('../reviews/everywhere');
 const TYPE_LABEL = { recommendation: 'Recommendation', recommendation_tally: 'Recommendation count', rating: 'Rating', rating_aggregate: 'Aggregate rating' };
 const REASON_LABEL = {
     scale_not_stated: 'the source did not state the rating scale',
@@ -73,13 +88,16 @@ function aggregateLine(agg) {
 }
 
 /** The front page opens with what OpenVibe.Reviews is for (openvibe-shared/showcase), then the entities. */
-function reviewsShowcase() {
+function reviewsHero() {
     return showcase.hero({
         eyebrow: 'OpenVibe.Reviews',
-        title: 'Review scores you can', accent: 'trace',
-        lede: 'Ratings and recommendations gathered from named sources. Every number shows where it came from and when it was read, and when no source has said anything there is no score at all.',
-        actions: [{ label: 'Browse what is reviewed', href: '#entities', primary: true }, { label: 'Search every review site', href: '/everywhere' }, { label: 'How it works', href: '/about' }],
-    }) + showcase.features({
+        title: 'Employers, landlords, restaurants, hosts.', accent: 'Every review in one place.',
+        lede: 'Read and write reviews of where you work, rent, eat and host, beside the scores other sites publish and every review site\'s own page for it. Every number says where it came from.',
+        actions: [{ label: 'Write a review', href: '/review', primary: true }, { label: 'Search every review site', href: '/everywhere' }, { label: 'How it works', href: '/about' }],
+    });
+}
+function reviewsFeatures() {
+    return showcase.features({
         title: 'What every page shows',
         items: [
             { icon: 'ov:search', title: 'Where each number came from', text: 'Every signal keeps its source, the item it came from, and when it was read.' },
@@ -118,9 +136,99 @@ function boardCard(x) {
         : html`<span class="rv-basis">No score yet: no source has said enough.</span>`}</a></li>`;
 }
 
-function home({ entities, total, editor }) {
-    return html`${raw(reviewsShowcase())}
-<section id="entities" class="sc-sec" aria-labelledby="rv-board-h"><h2 id="rv-board-h">What is reviewed</h2>
+/** Every other review site's own page for an entity (the /everywhere links for its kind, and its place). */
+function elsewhereLinks(entity) {
+    return everywhere.linksFor(entity.name, { kind: EW_KIND[entity.kind] || 'company', near: LOCAL.has(entity.kind) ? entity.description || '' : '' });
+}
+
+function stars(n) {
+    const v = Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
+    return html`<span class="rv-stars" role="img" aria-label="${v} out of 5 stars">${'★'.repeat(v)}<span class="rv-stars-off">${'★'.repeat(5 - v)}</span></span>`;
+}
+function paragraphs(text) {
+    return String(text || '').split(/\n{2,}/).map((para) => html`<p>${raw(para.split('\n').map((line) => ssr.escapeHtml(line)).join('<br>'))}</p>`);
+}
+
+function memberReviewItem(r, { entity, editor }) {
+    return html`<li><article class="rv-mr" id="${r.id}"><header>${stars(r.rating)} <b>${r.title}</b></header>
+<p class="rv-muted">${r.author_name}${r.relation ? html` · ${r.relation}` : ''} · ${t(r.created_at)}${r.edited ? ' (edited)' : ''}</p>
+<div class="rv-mr-body">${paragraphs(r.body)}</div>
+${r.mine ? html`<form method="post" action="${epath(entity)}/reviews/${r.id}/remove" class="rv-inline"><button type="submit" class="rv-link-button">Delete my review</button></form>`
+        : editor ? html`<form method="post" action="${epath(entity)}/reviews/${r.id}/remove" class="rv-inline"><input type="text" name="reason" placeholder="Reason (kept in the log)" aria-label="Reason for removing" maxlength="300"> <button type="submit" class="rv-link-button">Remove</button></form>` : ''}
+</article></li>`;
+}
+
+/** The members' reviews of an entity: their numbers, the reviews, and the viewer's own form. */
+function memberSection(members, { entity, actor, editor, error, values }) {
+    const st = members.stats;
+    const mine = members.mine;
+    const v = values || (mine ? { rating: mine.rating, title: mine.title, body: mine.body, relation: mine.relation } : {});
+    const rels = RELATIONS[entity.kind] || [];
+    return html`<section id="member-reviews" aria-labelledby="mr-h"><h2 id="mr-h">Reviews from OpenVibe members${st.count ? ` (${st.count})` : ''}</h2>
+${st.count ? html`<div class="rv-mr-summary"><p><span class="rv-big">${String(st.average)}</span> <span class="rv-muted">out of 5</span> ${stars(st.average)}<br><span class="rv-muted">from ${n(st.count)} review${st.count === 1 ? '' : 's'} written here by people with an OpenVibe account</span></p>
+<ul class="rv-dist" aria-label="How many members gave each rating">${[5, 4, 3, 2, 1].map((k) => { const c = st.distribution[k - 1]; return html`<li><span>${String(k)}★</span><span class="rv-meter"><span style="width:${(st.count ? (100 * c) / st.count : 0).toFixed(1)}%"></span></span><span class="rv-muted">${n(c)}</span></li>`; })}</ul></div>
+<ol class="rv-mr-list">${members.reviews.map((r) => memberReviewItem(r, { entity, editor }))}</ol>`
+        : html`<p class="rv-muted">No one has reviewed ${entity.name} here yet.${actor && actor.subject ? ' Be the first.' : ''}</p>`}
+<div id="write" class="rv-mr-write">${actor && actor.subject ? html`<h3>${mine ? 'Your review' : `Review ${entity.name}`}</h3>
+${error ? notice('error', error) : ''}
+<form method="post" action="${epath(entity)}/reviews" class="rv-form">
+<fieldset class="rv-rate"><legend>Your rating</legend>${[1, 2, 3, 4, 5].map((k) => html`<label><input type="radio" name="rating" value="${String(k)}" required${String(v.rating) === String(k) ? raw(' checked') : ''}> ${String(k)} star${k === 1 ? '' : 's'}</label>`)}</fieldset>
+${rels.length ? html`<label>How you know it <select name="relation"><option value="">Prefer not to say</option>${rels.map((x) => html`<option${v.relation === x ? raw(' selected') : ''}>${x}</option>`)}</select></label>` : ''}
+<label>Title <input type="text" name="title" maxlength="120" required value="${v.title || ''}" placeholder="One line about it"></label>
+<label>Your review <textarea name="body" rows="6" minlength="30" maxlength="5000" required placeholder="What was it like? What happened?">${v.body || ''}</textarea></label>
+<p class="rv-muted">Posted under your OpenVibe name. Say what happened and what it was like; reviews that name private people, threaten anyone or are not about ${entity.name} are removed.</p>
+<button type="submit">${mine ? 'Update your review' : 'Post review'}</button></form>`
+        : html`<p><a class="rv-button" href="/auth/login?next=${encodeURIComponent(`${epath(entity)}#write`)}">Sign in to review ${entity.name}</a></p>`}</div>
+</section>`;
+}
+
+function elsewhereSection(links, entity) {
+    if (!links.length) return '';
+    return html`<section id="elsewhere" aria-labelledby="ew-h"><h2 id="ew-h">${entity.name} on other review sites</h2>
+<p class="rv-muted">Each opens that site's own page for it, in a new tab.</p>
+<ul class="rv-elsewhere">${links.map((l) => html`<li><a href="${l.url}" target="_blank" rel="nofollow noopener noreferrer">${l.name}</a> <span class="rv-muted">${l.best}</span></li>`)}</ul></section>`;
+}
+
+/** /review: name what to review; found, or added by the member. */
+function reviewStartPage({ values = {}, kinds, local, actor, error = null }) {
+    const k = values.kind || 'employer';
+    return html`${crumbs([{ name: 'Reviews', url: '/' }, { name: 'Write a review' }])}
+<article class="rv-article"><h1>Write a review</h1>
+<p>Employers, landlords, restaurants, hosting providers, products, apps: name it, and if it is already here you go straight to its page; if not, you add it.</p>
+${error ? notice('error', error) : ''}
+${actor && actor.subject ? html`<form method="post" action="/review" class="rv-form">
+<label>What is it? <select name="kind">${kinds.map((x) => html`<option value="${x}"${x === k ? raw(' selected') : ''}>${KIND_LABEL[x]}</option>`)}</select></label>
+<label>Its name <input type="text" name="name" maxlength="200" required value="${values.name || ''}" placeholder="e.g. Acme Corp, Joe's Pizza, Hetzner"></label>
+<label>Where it is <input type="text" name="place" maxlength="120" value="${values.place || ''}" placeholder="City, and state or country"> <span class="rv-muted">Needed for ${local.map((x) => KIND_PLURAL[x].toLowerCase()).join(', ')}.</span></label>
+<label>Its website (optional) <input type="text" name="url" maxlength="300" value="${values.url || ''}" placeholder="example.com"> <span class="rv-muted">So the same one is found again.</span></label>
+<button type="submit">Continue</button></form>`
+        : html`<p><a class="rv-button" href="/auth/login?next=%2Freview">Sign in with OpenVibe to write a review</a></p><p class="rv-muted">Reading needs no account.</p>`}
+<p class="rv-muted">Looking for what other sites say? <a href="/everywhere">Search every review site</a>.</p></article>`;
+}
+
+/** /k/:kind — everything of one kind, the most reviewed by members first. */
+function kindPage({ kind, page, total, entities }) {
+    const pages = Math.max(1, Math.ceil(total / 60));
+    return html`${crumbs([{ name: 'Reviews', url: '/' }, { name: KIND_PLURAL[kind] }])}
+<article class="rv-article"><h1>${KIND_PLURAL[kind]}</h1>
+<p><a class="rv-button" href="/review?kind=${kind}">Review ${LOCAL.has(kind) ? 'one near you' : `a${/^[aeiou]/i.test(KIND_LABEL[kind]) ? 'n' : ''} ${KIND_LABEL[kind].toLowerCase()}`}</a></p>
+${entities.length ? html`<ul class="rv-kind-list">${entities.map((x) => html`<li><a href="${epath(x)}"><b>${x.name}</b></a>${x.description && LOCAL.has(x.kind) ? html` <span class="rv-muted">${x.description}</span>` : ''}
+<br>${x.member_count ? html`${stars(x.member_avg)} <span class="rv-muted">${String(x.member_avg)} from ${n(x.member_count)} review${x.member_count === 1 ? '' : 's'}</span>` : html`<span class="rv-muted">No member reviews yet</span>`}</li>`)}</ul>`
+        : html`<p class="rv-muted">None yet. The first review adds one.</p>`}
+${pages > 1 ? html`<nav class="rv-pager" aria-label="Pages">${page > 1 ? html`<a href="/k/${kind}?page=${String(page - 1)}">Newer</a> ` : ''}Page ${String(page)} of ${String(pages)}${page < pages ? html` <a href="/k/${kind}?page=${String(page + 1)}">More</a>` : ''}</nav>` : ''}
+</article>`;
+}
+
+function home({ entities, total, editor, recent = [], kinds = {} }) {
+    const browse = ['employer', 'landlord', 'restaurant', 'hosting', 'business', 'product', 'app', 'game', 'vehicle'];
+    return html`${raw(reviewsHero())}
+<section class="sc-sec" aria-labelledby="rv-kinds-h"><h2 id="rv-kinds-h">Browse and review</h2>
+<ul class="rv-kinds">${browse.map((k) => html`<li><a href="/k/${k}"><b>${KIND_PLURAL[k]}</b><span class="rv-muted">${kinds[k] ? `${n(kinds[k])} here` : 'Be the first'}</span></a></li>`)}</ul>
+<p><a class="rv-button" href="/review">Write a review</a> <a href="/everywhere">Search every review site</a></p></section>
+${recent.length ? html`<section class="sc-sec" aria-labelledby="rv-recent-h"><h2 id="rv-recent-h">Latest reviews from members</h2>
+<ul class="rv-recent">${recent.map((r) => html`<li><a href="/e/${r.entity.slug}#${r.id}"><span class="rv-card-head"><b>${r.entity.name}</b> <span class="rv-tag">${KIND_LABEL[r.entity.kind]}</span></span>${stars(r.rating)} <b>${r.title}</b><br><span class="rv-muted">${r.body.length > 160 ? `${r.body.slice(0, 157)}…` : r.body}</span></a></li>`)}</ul></section>` : ''}
+${raw(reviewsFeatures())}
+<section id="entities" class="sc-sec" aria-labelledby="rv-board-h"><h2 id="rv-board-h">Scores from sources</h2>
 ${entities.length ? html`<p class="sc-lede">Each score comes from named sources. Open one to see every signal behind it, when it was read, and how the number was worked out.</p><ul class="rv-board">${entities.map(boardCard)}</ul>`
         : html`<p class="rv-muted">Nothing yet. Entities appear here once a source has stated something about them (or an editor has published a summary).</p>`}
 <p class="rv-muted">${n(total)} reviewed in total. <a href="/feed.atom">Atom</a> · <a href="/feed.json">JSON Feed</a>${editor ? html` · <a href="/editor">Editor desk</a>` : ''}</p></section>`;
@@ -269,7 +377,7 @@ ${comments.length ? html`<ul class="rv-comments">${comments.map((c) => html`<li>
 ${form}</section>`;
 }
 
-function entityPage(p, { discussion, actor, flash }) {
+function entityPage(p, { discussion, actor, flash, members = null, elsewhere = [], reviewError = null, reviewValues = null }) {
     const en = p.entity;
     const limits = [];
     for (const s of p.sources) {
@@ -281,13 +389,14 @@ function entityPage(p, { discussion, actor, flash }) {
     const otherNames = p.aliases.filter((a) => a.type === 'name' && a.value !== en.name);
     return html`${crumbs([{ name: 'Reviews', url: '/' }, { name: en.name }])}
 <article class="rv-entity">
-<header><h1>${en.name}</h1><p class="rv-muted"><span class="rv-tag">${KIND_LABEL[en.kind]}</span> · <a href="${epath(en)}/history">History</a> · <a href="${epath(en)}.json">JSON</a> · <a href="${epath(en)}/correct">Suggest a correction</a>${p.editor ? html` · <a href="${epath(en)}/edit">Edit</a>` : ''}</p></header>
+<header><h1>${en.name}</h1><p class="rv-muted"><span class="rv-tag">${KIND_LABEL[en.kind]}</span>${LOCAL.has(en.kind) && en.description ? html` · ${en.description}` : ''} · <a href="${epath(en)}/history">History</a> · <a href="${epath(en)}.json">JSON</a> · <a href="${epath(en)}/correct">Suggest a correction</a>${p.editor ? html` · <a href="${epath(en)}/edit">Edit</a>` : ''}</p></header>
 ${flash ? notice('ok', flash) : ''}
-${en.description ? html`<p>${en.description}</p>` : ''}
+${en.description && !LOCAL.has(en.kind) ? html`<p>${en.description}</p>` : ''}
+${members ? memberSection(members, { entity: en, actor, editor: p.editor, error: reviewError, values: reviewValues }) : ''}
 ${p.merged_from.length ? html`<p class="rv-muted">Includes the signals of ${p.merged_from.map((m, i) => html`${i ? ', ' : ''}${m.name}`)} (merged here; see <a href="${epath(en)}/history#merges">history</a>).</p>` : ''}
-${aggregateSection(p)}
-${summarySection(p)}
-<section><h2 id="signals">Signals (${String(p.signals.length)})</h2>
+${p.aggregate || p.signals.length || p.sources.length || !(members && members.stats.count) ? aggregateSection(p) : ''}
+${p.summary || p.editor || !(members && members.stats.count) ? summarySection(p) : ''}
+${p.signals.length || p.sources.length || p.inactive_signals.length ? html`<section><h2 id="signals">Signals from sources (${String(p.signals.length)})</h2>
 ${p.signals.length ? signalTable(p.signals, { caption: 'Signals from sources, with provenance' }) : html`<p class="rv-muted">No source has stated anything about this entity yet.</p>`}
 ${p.inactive_signals.length ? html`<p class="rv-muted">${String(p.inactive_signals.length)} earlier signal(s) were replaced or withdrawn by their sources: <a href="${epath(en)}/history#signals">history</a>.</p>` : ''}
 </section>
@@ -295,7 +404,8 @@ ${p.inactive_signals.length ? html`<p class="rv-muted">${String(p.inactive_signa
 ${p.sources.length ? html`<ul>${p.sources.map((s) => html`<li><strong>${s.name || s.key}</strong>${safeUrl(s.homepage_url) ? html` (<a href="${safeUrl(s.homepage_url)}" rel="nofollow noopener">site</a>)` : ''}${s.terms_note ? html`<br><span class="rv-muted">Terms: ${s.terms_note}</span>` : ''}${s.trust.aggregate ? html`<br><span class="rv-tag">excluded from the aggregate</span> ${s.trust.aggregate.note || ''}` : ''}</li>`)}</ul>` : html`<p class="rv-muted">No sources yet.</p>`}
 ${limits.length ? html`<ul class="rv-limits">${limits.map((l) => html`<li>${l}</li>`)}</ul>` : ''}
 <p class="rv-muted">Coverage is what the sources above returned, nothing more: a source that samples recent reviews, one language or one shop describes that sample, not everyone's opinion.${p.open_corrections ? ` ${p.open_corrections} correction(s) are waiting for an editor.` : ''}</p>
-</section>
+</section>` : ''}
+${elsewhereSection(elsewhere, en)}
 ${otherNames.length || p.links.length ? html`<section><h2>Also known as and related</h2>
 ${otherNames.length ? html`<p>Also known as ${otherNames.map((a, i) => html`${i ? ', ' : ''}${a.value}`)}</p>` : ''}
 ${p.links.length ? html`<ul>${p.links.map((l) => html`<li>${l.type.replace(/_/g, ' ')}${l.direction === 'in' ? ' (from)' : ''}: ${l.other ? html`<a href="${epath(l.other)}">${l.other.name}</a>` : html`${l.ref ? `${l.ref.service} ${l.ref.type} ${l.ref.label || l.ref.id}` : ''}`}</li>`)}</ul>` : ''}</section>` : ''}
@@ -485,4 +595,5 @@ module.exports = {
     everywherePage,
     home, aboutPage, searchPage, entityPage, historyPage, summaryRevisionPage, correctionPage,
     editorHome, newEntityPage, editEntityPage, itemPage, signInPage, errorBody, epath, signalValue, KIND_LABEL,
+    reviewStartPage, kindPage, elsewhereLinks, KIND_PLURAL,
 };
