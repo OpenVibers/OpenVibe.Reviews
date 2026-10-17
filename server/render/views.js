@@ -260,14 +260,21 @@ ${actor && actor.subject ? html`<form method="post" action="/review" class="rv-f
 <p class="rv-muted">Looking for what other sites say? <a href="/everywhere">Search every review site</a>.</p></article>`;
 }
 
-/** /k/:kind — everything of one kind, the most reviewed by members first. */
+/** A list entry's official record, in a few words: its CFPB complaints, or its latest NYC inspection. */
+function recordLine(x) {
+    if (x.complaints != null) return html`<span class="rv-muted"> · ${n(x.complaints)} CFPB complaint${x.complaints === 1 ? '' : 's'}</span>`;
+    if (x.inspected_on) return html`<span class="rv-muted"> · inspected ${t(x.inspected_on)}${x.grade ? html`, ${GRADE_TEXT[x.grade] || `grade ${x.grade}`}` : ''}</span>`;
+    return '';
+}
+
+/** /k/:kind — everything of one kind, the most reviewed by members first, then by their official records. */
 function kindPage({ kind, page, total, entities }) {
     const pages = Math.max(1, Math.ceil(total / 60));
     return html`${crumbs([{ name: 'Reviews', url: '/' }, { name: KIND_PLURAL[kind] }])}
 <article class="rv-article"><h1>${KIND_PLURAL[kind]}</h1>
 <p><a class="rv-button" href="/review?kind=${kind}">Review ${LOCAL.has(kind) ? 'one near you' : `a${/^[aeiou]/i.test(KIND_LABEL[kind]) ? 'n' : ''} ${KIND_LABEL[kind].toLowerCase()}`}</a></p>
 ${entities.length ? html`<ul class="rv-kind-list">${entities.map((x) => html`<li><a href="${epath(x)}"><b>${x.name}</b></a>${x.description && LOCAL.has(x.kind) ? html` <span class="rv-muted">${x.description}</span>` : ''}
-<br>${x.member_count ? html`${stars(x.member_avg)} <span class="rv-muted">${String(x.member_avg)} from ${n(x.member_count)} review${x.member_count === 1 ? '' : 's'}</span>` : html`<span class="rv-muted">No member reviews yet</span>`}</li>`)}</ul>`
+<br>${x.member_count ? html`${stars(x.member_avg)} <span class="rv-muted">${String(x.member_avg)} from ${n(x.member_count)} review${x.member_count === 1 ? '' : 's'}</span>` : html`<span class="rv-muted">No member reviews yet</span>`}${recordLine(x)}</li>`)}</ul>`
         : html`<p class="rv-muted">None yet. The first review adds one.</p>`}
 ${pages > 1 ? html`<nav class="rv-pager" aria-label="Pages">${page > 1 ? html`<a href="/k/${kind}?page=${String(page - 1)}">Newer</a> ` : ''}Page ${String(page)} of ${String(pages)}${page < pages ? html` <a href="/k/${kind}?page=${String(page + 1)}">More</a>` : ''}</nav>` : ''}
 </article>`;

@@ -56,6 +56,28 @@ const RATING_TEXT_RE = new RegExp([
 
 const toIso = (ms) => (ms == null ? null : new Date(ms).toISOString());
 
+// Official records' names (CFPB lists companies in capitals): readable, with companies' own spellings.
+const SMALL_WORDS = new Set(['a', 'an', 'and', 'at', 'by', 'for', 'in', 'of', 'on', 'or', 'the', 'to', 'de', 'la', 'del', 'n']);
+const KEEP_UPPER = /^(LLC|LLP|LP|NA|N\.A\.|USA|US|U\.S\.|NY|NYC|BBQ|II|III|IV|FSB|PLC|AG|SA|BMW|HSBC|TD|USAA|PNC|BBVA|NFCU|MBA|IHOP|KFC|PLLC|PC|CO-OP|ATM|ACE|AAA|CFPB)$/;
+// Names a company spells its own way.
+const OWN_SPELLING = { JPMORGAN: 'JPMorgan', TRANSUNION: 'TransUnion', PAYPAL: 'PayPal', EBAY: 'eBay', SOFI: 'SoFi', MONEYGRAM: 'MoneyGram', LENDINGCLUB: 'LendingClub',
+    MCDONALDS: 'McDonald\'s', "MCDONALD'S": "McDonald's", IPHONE: 'iPhone', LOANDEPOT: 'loanDepot', NAVIENT: 'Navient', DITECH: 'Ditech', CASHAPP: 'Cash App', CREDITONE: 'Credit One' };
+/** "CAPITAL ONE FINANCIAL CORPORATION" → "Capital One Financial Corporation"; mixed-case names stay as written. */
+function recordName(raw) {
+    const t = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (!t || /[a-z]/.test(t)) return t;
+    return t.split(' ').map((w, i) => {
+        const bare = w.replace(/[,.]$/, '');
+        if (OWN_SPELLING[bare]) return OWN_SPELLING[bare] + w.slice(bare.length);
+        if (KEEP_UPPER.test(bare)) return w;
+        // A short word without vowels is an abbreviation (SLM, PNC, TD Bank's TD).
+        if (bare.length <= 4 && !/[AEIOUY]/.test(bare) && /^[A-Z&]+$/.test(bare)) return w;
+        const lower = w.toLowerCase();
+        if (i > 0 && SMALL_WORDS.has(lower)) return lower;
+        return lower.replace(/(^|[-/&(.'])([a-z])/g, (m, p1, c) => p1 + c.toUpperCase()).replace(/^Mc([a-z])/, (m, c) => `Mc${c.toUpperCase()}`).replace(/'S\b/g, "'s");
+    }).join(' ').replace(/\bInc\b/g, 'Inc.').replace(/\bInc\.\./g, 'Inc.').replace(/\bLlc\b/g, 'LLC');
+}
+
 function createReviewsService({ db, stores, outbox, config, now = () => Date.now(), log = console, indexnow = null }) {
     const { revisions, reviews, redirects, discussions, sequencer } = stores;
     const access = createAccess(config);
@@ -98,8 +120,13 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                                          FROM review_member_reviews r JOIN review_entities e ON e.id = r.entity_id
                                          WHERE r.status = 'published' AND e.state = 'active' ORDER BY r.created_at DESC LIMIT ?`),
         entitiesOfKind: db.prepare(`SELECT e.*, (SELECT COUNT(*) FROM review_member_reviews m WHERE m.entity_id = e.id AND m.status = 'published') AS member_count,
-                                           (SELECT AVG(m.rating)::float8 FROM review_member_reviews m WHERE m.entity_id = e.id AND m.status = 'published') AS member_avg
-                                    FROM review_entities e WHERE e.state = 'active' AND e.kind = ? ORDER BY member_count DESC, e.updated_at DESC LIMIT ? OFFSET ?`),
+                                           (SELECT AVG(m.rating)::float8 FROM review_member_reviews m WHERE m.entity_id = e.id AND m.status = 'published') AS member_avg,
+                                           (SELECT MAX((r.fields->>'complaints')::bigint) FROM review_records r WHERE r.entity_id = e.id AND r.status = 'active' AND r.kind = 'complaint_tally') AS complaints,
+                                           (SELECT MAX(r.occurred_on) FROM review_records r WHERE r.entity_id = e.id AND r.status = 'active' AND r.kind = 'inspection_violation') AS inspected_on,
+                                           (SELECT r.fields->>'grade' FROM review_records r WHERE r.entity_id = e.id AND r.status = 'active' AND r.kind = 'inspection_violation' AND r.fields->>'grade' IS NOT NULL
+                                             ORDER BY r.occurred_on DESC LIMIT 1) AS grade
+                                    FROM review_entities e WHERE e.state = 'active' AND e.kind = ?
+                                    ORDER BY member_count DESC, complaints DESC NULLS LAST, inspected_on DESC NULLS LAST, e.updated_at DESC LIMIT ? OFFSET ?`),
         countOfKind: db.prepare("SELECT COUNT(*) AS n FROM review_entities WHERE state = 'active' AND kind = ?"),
         kindCounts: db.prepare("SELECT kind, COUNT(*) AS n FROM review_entities WHERE state = 'active' GROUP BY kind"),
         memberReviewsSince: db.prepare('SELECT COUNT(*) AS n FROM review_member_reviews WHERE author = ? AND created_at > ?'),
@@ -922,19 +949,6 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
     const RECORD_KINDS = new Set(['complaint_tally', 'inspection_violation']);
     const RECORD_MIN_COMPLAINTS = 500;
     const BOROUGHS = { manhattan: 'Manhattan', brooklyn: 'Brooklyn', queens: 'Queens', bronx: 'Bronx', 'staten island': 'Staten Island' };
-    const SMALL_WORDS = new Set(['a', 'an', 'and', 'at', 'by', 'for', 'in', 'of', 'on', 'or', 'the', 'to', 'de', 'la', 'del', 'n']);
-    const KEEP_UPPER = /^(LLC|LLP|LP|INC|NA|N\.A\.|USA|US|U\.S\.|NY|NYC|BBQ|II|III|IV|FSB|PLC|AG|SA|BMW|HSBC|TD|USAA|PNC|BBVA|JPMORGAN|NFCU|MBA|IHOP|KFC)$/;
-    /** "CAPITAL ONE FINANCIAL CORPORATION" → "Capital One Financial Corporation"; mixed-case names stay as written. */
-    function recordName(raw) {
-        const t = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-        if (!t || /[a-z]/.test(t)) return t;
-        return t.split(' ').map((w, i) => {
-            if (KEEP_UPPER.test(w.replace(/[,.]$/, '').toUpperCase()) && !/^(INC|LLC)\.?,?$/.test(w)) return w;
-            const lower = w.toLowerCase();
-            if (i > 0 && SMALL_WORDS.has(lower)) return lower;
-            return lower.replace(/(^|[-/&(.'])([a-z])/g, (m, p1, c) => p1 + c.toUpperCase()).replace(/^Mc([a-z])/, (m, c) => `Mc${c.toUpperCase()}`).replace(/'S\b/g, "'s");
-        }).join(' ').replace(/\bInc\b/g, 'Inc.').replace(/\bInc\.\./g, 'Inc.').replace(/\bLlc\b/g, 'LLC');
-    }
     function recordTarget(item) {
         const f = item.fields || {};
         if (item.kind === 'complaint_tally') {
@@ -1519,7 +1533,8 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             const rows = await q.entitiesOfKind.all(kind, limit, offset);
             return {
                 total: Number((await q.countOfKind.get(kind)).n),
-                entities: rows.map((x) => ({ ...x, member_count: Number(x.member_count) || 0, member_avg: x.member_avg == null ? null : Math.round(Number(x.member_avg) * 10) / 10 })),
+                entities: rows.map((x) => ({ ...x, member_count: Number(x.member_count) || 0, member_avg: x.member_avg == null ? null : Math.round(Number(x.member_avg) * 10) / 10,
+                    complaints: x.complaints == null ? null : Number(x.complaints) })),
             };
         },
         async kindCounts() { return Object.fromEntries((await q.kindCounts.all()).map((x) => [x.kind, Number(x.n)])); },
@@ -2070,4 +2085,4 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
     return svc;
 }
 
-module.exports = { createReviewsService, ReviewsError, SUMMARY_WORKFLOW, RATING_TEXT_RE };
+module.exports = { createReviewsService, ReviewsError, SUMMARY_WORKFLOW, RATING_TEXT_RE, recordName };

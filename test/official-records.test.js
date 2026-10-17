@@ -15,6 +15,16 @@ const nyc = (fields) => baseItem({ source: 'nyc-restaurant-inspections', kind: '
     camis: '50071318', dba: 'THE COFFEE CLUB', boro: 'Brooklyn', building: '9526', street: '4 AVENUE', zipcode: '11209', cuisine: 'Coffee/Tea',
     inspection_type: 'Cycle Inspection / Initial Inspection', action: 'Violations were cited in the following area(s).', critical_flag: 'Not Critical', score: '20', grade: null, ...fields } });
 
+t('company names read as the companies write them', () => {
+    const { recordName } = require('../server/reviews/service');
+    assert.strictEqual(recordName('JPMORGAN CHASE & CO.'), 'JPMorgan Chase & Co.');
+    assert.strictEqual(recordName('SLM CORPORATION'), 'SLM Corporation');
+    assert.strictEqual(recordName('TRANSUNION INTERMEDIATE HOLDINGS, INC.'), 'TransUnion Intermediate Holdings, Inc.');
+    assert.strictEqual(recordName('BANK OF AMERICA, NATIONAL ASSOCIATION'), 'Bank of America, National Association');
+    assert.strictEqual(recordName("JOE'S PIZZA"), "Joe's Pizza");
+    assert.strictEqual(recordName('Experian Information Solutions Inc.'), 'Experian Information Solutions Inc.', 'mixed case stays as written');
+});
+
 t('CFPB counts and NYC inspections land on entities, shown as official records, not signals', async () => {
     const h = await boot();
     try {
@@ -69,8 +79,12 @@ t('CFPB counts and NYC inspections land on entities, shown as official records, 
         assert.ok(!/rv-grade-a/.test((await req(h, 'GET', '/e/the-coffee-club-brooklyn-ny')).text));
 
         // /k/organization and /k/restaurant list them; the home offers both kinds and the new ones.
-        assert.match((await req(h, 'GET', '/k/organization')).text, /Capital One Financial Corporation/);
-        assert.match((await req(h, 'GET', '/k/restaurant')).text, /The Coffee Club/);
+        // Lists order by members' reviews, then by the records, and say what the record is.
+        await importItem(h, cfpb('EQUIFAX, INC.', 1991097));
+        const orgs = (await req(h, 'GET', '/k/organization')).text;
+        assert.ok(orgs.indexOf('Equifax, Inc.') < orgs.indexOf('Capital One Financial Corporation'), 'more complaints first when nobody reviewed either');
+        assert.match(orgs, /Capital One Financial Corporation[\s\S]*?34,100 CFPB complaints/);
+        assert.match((await req(h, 'GET', '/k/restaurant')).text, /The Coffee Club[\s\S]*?inspected <time[^>]*>[^<]*<\/time>/);
         const home = (await req(h, 'GET', '/')).text;
         for (const k of ['organization', 'community', 'platform']) assert.ok(home.includes(`href="/k/${k}"`), k);
         assert.strictEqual((await req(h, 'POST', '/review', { cookie: ana, form: { kind: 'community', name: 'r/selfhosted' } })).status, 303, 'a member can review a community');
