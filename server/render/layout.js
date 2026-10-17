@@ -38,7 +38,8 @@ let RELEASE = 'dev';
 function setRelease(id) { if (id) RELEASE = String(id); }
 
 const LINKS = [
-    { label: 'Entities', href: '/', key: 'home' },
+    { label: 'Reviews', href: '/', key: 'home' },
+    { label: 'Write a review', href: '/review', key: 'review' },
     { label: 'Every review site', href: '/everywhere', key: 'everywhere' },
     { label: 'How it works', href: '/about', key: 'about' },
 ];

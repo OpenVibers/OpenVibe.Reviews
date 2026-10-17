@@ -104,3 +104,29 @@ table { border-collapse: collapse; }
 .rv-audit { font-size: 14px; }
 details summary { cursor: pointer; }
 code { overflow-wrap: anywhere; }
+
+/* Members' reviews (1–5 stars), other review sites, kinds */
+.rv-stars { color: #f5b301; letter-spacing: 1px; white-space: nowrap; }
+.rv-stars-off { color: var(--rv-line); }
+.rv-mr-summary { display: flex; flex-wrap: wrap; gap: 12px 32px; align-items: center; margin: 8px 0 16px; }
+.rv-dist { list-style: none; margin: 0; padding: 0; min-width: min(100%, 260px); }
+.rv-dist li { display: grid; grid-template-columns: 2.2em minmax(0, 1fr) 3em; gap: 8px; align-items: center; font-size: .85rem; }
+.rv-mr-list { list-style: none; margin: 0; padding: 0; }
+.rv-mr { border-top: 1px solid var(--rv-line); padding: 14px 0; }
+.rv-mr header { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.rv-mr .rv-muted { margin: 4px 0 8px; font-size: .85rem; }
+.rv-mr-body p { margin: 0 0 8px; overflow-wrap: anywhere; }
+.rv-mr-write { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--rv-line); max-width: 720px; }
+.rv-rate { border: 0; padding: 0; margin: 10px 0; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.rv-rate legend { padding: 0; margin-bottom: 4px; }
+.rv-rate label { display: inline-flex; gap: 4px; align-items: center; margin: 0; }
+.rv-form textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; font: inherit; }
+.rv-link-button { background: none; border: 0; padding: 0; color: var(--rv-accent); font-weight: 500; cursor: pointer; text-decoration: underline; }
+.rv-elsewhere, .rv-kind-list, .rv-recent { list-style: none; margin: 0; padding: 0; }
+.rv-elsewhere li, .rv-kind-list li { padding: 6px 0; border-bottom: 1px solid var(--rv-line); }
+.rv-kinds { list-style: none; margin: 0 0 12px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr)); gap: 8px; }
+.rv-kinds a { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--rv-line); border-radius: 10px; text-decoration: none; color: inherit; }
+.rv-kinds a:hover, .rv-kinds a:focus-visible { border-color: var(--rv-accent); }
+.rv-recent { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 10px; }
+.rv-recent a { display: block; padding: 12px; border: 1px solid var(--rv-line); border-radius: 10px; text-decoration: none; color: inherit; height: 100%; box-sizing: border-box; }
+.rv-pager { margin-top: 12px; }

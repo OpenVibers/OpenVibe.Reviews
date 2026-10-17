@@ -31,18 +31,21 @@ const views = require('../render/views');
 const { ratingForStructuredData } = require('../reviews/aggregate');
 const { actorMiddleware, crossSite } = require('./common');
 
-const SCHEMA_TYPE = { product: 'Product', game: 'VideoGame', software: 'SoftwareApplication', service: 'Service', place: 'Place', organization: 'Organization', media: 'CreativeWork', other: 'Thing' };
+const SCHEMA_TYPE = { product: 'Product', game: 'VideoGame', software: 'SoftwareApplication', service: 'Service', place: 'Place', organization: 'Organization', media: 'CreativeWork', other: 'Thing',
+    employer: 'Organization', landlord: 'Organization', restaurant: 'Restaurant', business: 'LocalBusiness', hosting: 'Organization', app: 'SoftwareApplication', vehicle: 'Product' };
 
 /**
  * JSON-LD for an entity page. Product / Thing with an AggregateRating, and a Review for the
  * summary, exist ONLY when the aggregate exists — i.e. when real signals back it. Without
  * signals the page carries breadcrumbs and nothing that could be read as a rating.
  */
-function structuredData(p, config) {
+function structuredData(p, config, members = null) {
     const en = p.entity;
     const origin = config.baseUrl;
     const out = [seo.structuredData.breadcrumbs([{ name: 'OpenVibe.Reviews', url: `${origin}/` }, { name: en.name, url: en.url }])];
-    const rating = ratingForStructuredData(p.aggregate && p.aggregate.result);
+    // The sources' aggregate, else the members' own reviews shown on the page (1–5 stars, their real count).
+    const rating = ratingForStructuredData(p.aggregate && p.aggregate.result)
+        || (members && members.stats.count ? { value: members.stats.average, best: 5, worst: 1, count: members.stats.count } : null);
     if (!rating) return out;
     const type = SCHEMA_TYPE[en.kind] || 'Thing';
     out.push(type === 'Product'
@@ -146,7 +149,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
     // ── Public ───────────────────────────────────────────────
     router.get('/', async (req, res) => {
         const all = await svc.listEntities({ limit: 1 });
-        send(req, res, 200, views.home({ entities: await svc.entitiesWithData(60), total: all.total, editor: isEditor(req) }), {
+        send(req, res, 200, views.home({ entities: await svc.entitiesWithData(60), total: all.total, editor: isEditor(req), recent: await svc.recentMemberReviews(6), kinds: await svc.kindCounts() }), {
             robots: 'index, follow', cache: 'public', active: 'home', path: '/', summary: SITE_SUMMARY, styles: [showcase.STYLESHEET],
             jsonLd: seo.structuredData.webPage({ url: `${config.baseUrl}/`, name: 'OpenVibe.Reviews', description: 'Review signals from named sources, with provenance and honest aggregates.' }),
         });
@@ -162,6 +165,55 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
             title: q ? `“${q}” on every review site` : 'Every review site, one search', robots: q ? 'noindex, follow' : 'index, follow', cache: 'public', active: 'everywhere', localStyles: ['css/everywhere.css'],
         });
     });
+    // ── Members' reviews ─────────────────────────────────────
+    // /review: name what you want to review (found, or added by you), then write about it on its page.
+    router.get('/review', (req, res) => {
+        const kind = svc.MEMBER_KINDS.includes(String(req.query.kind)) ? String(req.query.kind) : 'employer';
+        send(req, res, 200, views.reviewStartPage({ values: { kind, name: String(req.query.name || '').slice(0, 200) }, kinds: svc.MEMBER_KINDS, local: [...svc.LOCAL_KINDS], actor: req.actor }), {
+            title: 'Write a review', robots: 'index, follow', cache: req.actor.kind === 'anonymous' ? 'public' : null, active: 'review',
+        });
+    });
+    router.post('/review', F('reviews.entity.suggest'), form, wrap(async (req, res) => {
+        if (!req.actor.subject) return needSignIn(req, res, 'Sign in with your OpenVibe account to write a review.');
+        const b = req.body || {};
+        try {
+            const { entity } = await svc.memberEntity({ kind: b.kind, name: b.name, place: b.place, url: b.url }, req.actor);
+            res.redirect(303, `${svc.entityPath(entity)}#write`);
+        } catch (err) {
+            if (!err.status || err.status >= 500) throw err;
+            send(req, res, err.status, views.reviewStartPage({ values: b, kinds: svc.MEMBER_KINDS, local: [...svc.LOCAL_KINDS], actor: req.actor, error: err.message }), { title: 'Write a review', robots: 'noindex, nofollow' });
+        }
+    }));
+    router.post('/e/:slug/reviews', F('reviews.review.write'), form, wrap(async (req, res) => {
+        const e = await locate(req, res, '/reviews');
+        if (!e) return;
+        if (!req.actor.subject) return needSignIn(req, res, 'Sign in with your OpenVibe account to write a review.');
+        const b = req.body || {};
+        try {
+            await svc.writeMemberReview(e.id, { rating: b.rating, title: b.title, body: b.body, relation: b.relation }, req.actor);
+            res.redirect(303, `${svc.entityPath(e)}?saved=1#member-reviews`);
+        } catch (err) {
+            if (!err.status || err.status >= 500) throw err;
+            await sendEntity(req, res, e, { status: err.status, reviewError: err.message, reviewValues: b });
+        }
+    }));
+    router.post('/e/:slug/reviews/:id/remove', F('reviews.review.write'), form, wrap(async (req, res) => {
+        const e = await locate(req, res, `/reviews/${req.params.id}/remove`);
+        if (!e) return;
+        if (!req.actor.subject) return needSignIn(req, res, 'Sign in with your OpenVibe account.');
+        await svc.removeMemberReview(req.params.id, req.actor, (req.body || {}).reason);
+        res.redirect(303, `${svc.entityPath(e)}#member-reviews`);
+    }));
+    // /k/employer, /k/restaurant…: everything of one kind, the most reviewed by members first.
+    router.get('/k/:kind', wrap(async (req, res) => {
+        const kind = String(req.params.kind);
+        if (!svc.MEMBER_KINDS.includes(kind)) return errorPage(req, res, 404, 'Not found', 'There is no such kind.');
+        const page = Math.max(1, Math.min(200, parseInt(req.query.page, 10) || 1));
+        const data = await svc.entitiesOfKind(kind, { limit: 60, offset: (page - 1) * 60 });
+        send(req, res, 200, views.kindPage({ kind, page, ...data }), {
+            title: views.KIND_PLURAL[kind], robots: data.total ? 'index, follow' : 'noindex, follow', cache: 'public', path: `/k/${kind}`,
+        });
+    }));
     router.get('/about', (req, res) => send(req, res, 200, views.aboutPage(), { title: 'How it works', robots: 'index, follow', cache: 'public', active: 'about' }));
     router.get('/search', async (req, res) => {
         const query = String(req.query.q || '').slice(0, 200);
@@ -188,16 +240,24 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
         }
     }
 
+    // The entity page: source signals, the members' reviews (with the viewer's own form) and where else to read about it.
+    async function sendEntity(req, res, e, { status = 200, reviewError = null, reviewValues = null } = {}) {
+        const p = await svc.page(e, req.actor);
+        const discussion = await discussionFor(e, req.actor);
+        const members = await svc.memberReviews(e, req.actor);
+        const elsewhere = views.elsewhereLinks(e);
+        const signedIn = !!req.actor.subject;
+        send(req, res, status, views.entityPage(p, { discussion, actor: req.actor, flash: req.query.saved ? 'Saved.' : null, members, elsewhere, reviewError, reviewValues }), {
+            decision: p.decision, title: e.name, cache: discussion.state === 'ok' || signedIn ? null : 'public', path: svc.entityPath(e),
+            description: e.description && !svc.LOCAL_KINDS.has(e.kind) ? e.description
+                : `${e.name}${e.description ? ` (${e.description})` : ''}: ${members.stats.count ? `${members.stats.average} out of 5 from ${members.stats.count} OpenVibe member review${members.stats.count === 1 ? '' : 's'}, ` : ''}review signals${p.sources.length ? ` from ${p.sources.map((s) => s.name || s.key).join(', ')}` : ''}, and every other review site in one place.`,
+            canonical: p.entity.url, jsonLd: structuredData(p, config, members),
+        });
+    }
     router.get('/e/:slug', wrap(async (req, res) => {
         const e = await locate(req, res);
         if (!e) return;
-        const p = await svc.page(e, req.actor);
-        const discussion = await discussionFor(e, req.actor);
-        send(req, res, 200, views.entityPage(p, { discussion, actor: req.actor, flash: req.query.saved ? 'Saved.' : null }), {
-            decision: p.decision, title: e.name, cache: discussion.state === 'ok' ? null : 'public', path: svc.entityPath(e),
-            description: e.description || `${e.name}: review signals from ${p.sources.length ? p.sources.map((s) => s.name || s.key).join(', ') : 'no source yet'}, with provenance.`,
-            canonical: p.entity.url, jsonLd: structuredData(p, config),
-        });
+        await sendEntity(req, res, e);
     }));
 
     router.get('/e/:slug/history', async (req, res) => {
