@@ -204,6 +204,20 @@ t('one page of many reviews of a game re-indexes the game once (the Search follo
     } finally { await h.stop(); }
 });
 
+t('a queue of twelve reviews of one game (events that arrived while a drain ran) re-indexes it once', async () => {
+    const h = await boot();
+    try {
+        const e = await createEntity(h, { name: 'Portal 2', kind: 'game', aliases: [{ type: 'source', value: 'steam-reviews-portal-2' }] });
+        const upserts = async () => (await outbox(h)).filter((x) => x.event_type === 'reviews.index_document.upserted' && x.subject.id.endsWith(e.id)).length;
+        const before = await upserts();
+        for (let i = 0; i < 12; i++) await h.sync.enqueue(h.sources.put(steamItem({ votedUp: i % 3 !== 0 })).id, 'sources.item.created');
+        const drained = await h.sync.drain();
+        assert.deepStrictEqual([drained.done, drained.failed], [12, 0]);
+        assert.strictEqual(await upserts() - before, 1, 'one index document for the drained queue, not one per review');
+        assert.strictEqual((await aggregateOf(h, e.slug)).aggregate.result.components.recommendation.percent, 66.7, 'all 12 reviews counted');
+    } finally { await h.stop(); }
+});
+
 t('a Sources outage changes nothing and invents nothing', async () => {
     const h = await boot();
     try {
