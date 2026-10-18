@@ -51,6 +51,27 @@ t('NYC HPD: a building with open hazardous violations is a landlord page with th
     } finally { await h.stop(); }
 });
 
+t('a restaurant page with its inspections is indexable on its own; a bare count is not', async () => {
+    const h = await boot();
+    try {
+        // NYC Health's violation texts are the page's own substance (60 words is the gate's floor).
+        const cited = [
+            ['06D', 'Food contact surface not properly washed, rinsed and sanitized after each use and following any activity when contamination may have occurred.'],
+            ['08A', 'Establishment is not free of harborage or conditions conducive to rodents, insects or other pests, including holes, gaps and standing water.'],
+            ['02G', 'Cold food item held above 41 degrees Fahrenheit (smoked fish and reduced oxygen packaged foods above 38 degrees) except during necessary preparation.'],
+        ];
+        await cited.reduce((p, [code, violation]) => p.then(() => importItem(h, nyc({ inspection_date: '2026-10-01T00:00:00.000', violation_code: code, violation, critical_flag: 'Critical' }))), Promise.resolve());
+        await importItem(h, cfpb('CAPITAL ONE FINANCIAL CORPORATION', 34100));
+        await importItem(h, hpd({ buildingid: '288857', housenumber: '760', streetname: 'ELDERT LANE', open: '1794', c: '423', b: '1118', a: '252' }));
+        const index = (await req(h, 'GET', '/sitemap.xml')).text;
+        assert.match(index, /\/sitemaps\/entities-1\.xml/);
+        const urls = (await req(h, 'GET', '/sitemaps/entities-1.xml')).text;
+        assert.match(urls, /\/e\/the-coffee-club-9526-4-avenue-brooklyn-ny</, 'the restaurant, by its inspection');
+        assert.ok(!/capital-one/.test(urls) && !/eldert/.test(urls), 'a complaint count or a housing tally alone stays out (thin)');
+        assert.ok(!/noindex/.test((await req(h, 'GET', '/e/the-coffee-club-9526-4-avenue-brooklyn-ny')).text), 'and its page says so');
+    } finally { await h.stop(); }
+});
+
 t('company names read as the companies write them', () => {
     const { recordName } = require('../server/reviews/service');
     assert.strictEqual(recordName('JPMORGAN CHASE & CO.'), 'JPMorgan Chase & Co.');

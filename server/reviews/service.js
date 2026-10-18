@@ -624,12 +624,14 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         const rec = rev && rev.meta && rev.meta.authorship;
         // Members' reviews count as substance: their words (from three reviews up) and each review as a citation.
         const mem = await memberStats(members);
+        // So do official records: their own lines and their public body as the source (recordSubstance).
+        const recs = recordSubstance(await recordsView(e.id));
         return {
             state: e.state === 'deleted' ? 'deleted' : 'published',
             visibility: 'public',
             canonicalUrl: entityUrl(e),
-            wordCount: (rev ? ssr.wordCount(summaryText(rev)) : 0) + (mem.count >= 3 ? mem.words : 0),
-            citationCount: active.length + mem.count,
+            wordCount: (rev ? ssr.wordCount(summaryText(rev)) : 0) + (mem.count >= 3 ? mem.words : 0) + recs.words,
+            citationCount: active.length + mem.count + recs.sources,
             unsupportedClaims: rev ? await unsupportedCount(e.id, rev) : 0,
             noindex: !!e.noindex,
             ...(rec ? authorship.gateFacts(rec, await reviews.latest(summary.id, rev.number)) : {}),
@@ -1045,6 +1047,21 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
     }
 
     /** An entity's official records, for its page: the CFPB count, HPD's open violations, NYC inspections by day (newest first). */
+    /**
+     * What an entity's official records add to the index gate: the words of their specific lines (each inspection's
+     * date, grade, score and violations; the complaint count; the housing counts by class), never the page's fixed
+     * captions and caveats, and one source per public body. Only summaries and members' reviews counted before, so
+     * 1,155 NYC restaurant pages with their inspections were in no sitemap and no network search (2026-10-18). A page
+     * whose records are a bare count (a CFPB tally, an HPD building) stays under the gate's word floor.
+     */
+    function recordSubstance(rec) {
+        const lines = [];
+        if (rec.complaints) lines.push(`CFPB complaints ${rec.complaints.count}`);
+        if (rec.housing) lines.push(`HPD open violations ${rec.housing.open}: class C ${rec.housing.c}, class B ${rec.housing.b}, class A ${rec.housing.a}${rec.housing.last ? `; inspected ${rec.housing.last}` : ''}`);
+        for (const i of rec.inspections) lines.push([i.date, i.grade && `grade ${i.grade}`, i.score != null && `score ${i.score}`, ...i.violations.map((v) => v.text)].filter(Boolean).join(' '));
+        return { words: lines.length ? ssr.wordCount(lines.join('\n')) : 0, sources: (rec.complaints ? 1 : 0) + (rec.housing ? 1 : 0) + (rec.inspections.length ? 1 : 0) };
+    }
+
     async function recordsView(entityId) {
         const rows = await q.recordsOf.all([...await closure(entityId)]);
         const out = { complaints: null, housing: null, inspections: [], restaurant: null };
