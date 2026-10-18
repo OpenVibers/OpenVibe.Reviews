@@ -117,3 +117,22 @@ t("the outbox row and the state change share the caller's transaction (a rollbac
         assert.strictEqual((await h.db.prepare('SELECT name FROM review_entities WHERE id = ?').get(e.id)).name, row.name, 'the state change rolled back with it');
     } finally { await h.stop(); }
 });
+
+t('the index reconcile re-sends only what changed, entity by entity, stops when asked, and runs after the server listens', async () => {
+    const h = await boot();
+    try {
+        const e = await indexableEntity(h);
+        assert.deepStrictEqual(await h.svc.reconcileIndex(), { sent: 0 }, 'nothing changed since it was sent');
+        // Something the rules now say differently (a rename made without the service): the reconcile catches it.
+        await h.db.prepare('UPDATE review_entities SET name = ? WHERE id = ?').run('Portal 2 (renamed)', e.id);
+        assert.deepStrictEqual(await h.svc.reconcileIndex({ stopped: () => true }), { sent: 0 }, 'a shutdown ends it before the next entity');
+        assert.deepStrictEqual(await h.svc.reconcileIndex(), { sent: 1 });
+        const last = (await outbox(h)).filter((env) => env.event_type === 'reviews.index_document.upserted').pop();
+        assert.match(JSON.stringify(last.payload), /Portal 2 \(renamed\)/);
+        assert.deepStrictEqual(await h.svc.reconcileIndex(), { sent: 0 }, 'idempotent');
+    } finally { await h.stop(); }
+    // A running service listens first (6,800 entities took 30 s at boot on 2026-10-18, past the deploy's readiness wait).
+    const src = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+    assert.ok(src.indexOf('if (workers) reconciling = reconcile();') > src.indexOf('app.listen('), 'with workers, the reconcile starts after listen');
+    assert.match(src, /background: async \(\) => \{ stopping = true; if \(reconciling\) await reconciling; \}/, 'and a shutdown waits for it before the database closes');
+});
