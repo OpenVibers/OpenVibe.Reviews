@@ -2,8 +2,9 @@
 /**
  * Official records (migrations/0007): what a public body published about an entity, from OpenVibe.Sources —
  * the CFPB complaint database's count per company (complaint_tally) and NYC Health's inspection results
- * (inspection_violation, one row per violation). A record finds its entity by its external alias, else by name (and
- * place), else adds it (every NYC restaurant; companies with 500 complaints or more). The page shows them in their own
+ * (inspection_violation, one row per violation), and NYC HPD's open housing-code violations per building
+ * (housing_violation_tally). A record finds its entity by its external alias, else by name (and place), else adds it
+ * (every NYC restaurant; companies with 500 complaints or more; buildings with 10 or more open class C violations). The page shows them in their own
  * section, never as signals or in the aggregate; Search gets a line; a removed item takes its record away.
  */
 const assert = require('assert');
@@ -14,6 +15,41 @@ const cfpb = (company, complaints, extra = {}) => baseItem({ source: 'cfpb-compl
 const nyc = (fields) => baseItem({ source: 'nyc-restaurant-inspections', kind: 'inspection_violation', identity: `row-${Math.random().toString(36).slice(2, 10)}`, title: fields.dba, fields: {
     camis: '50071318', dba: 'THE COFFEE CLUB', boro: 'Brooklyn', building: '9526', street: '4 AVENUE', zipcode: '11209', cuisine: 'Coffee/Tea',
     inspection_type: 'Cycle Inspection / Initial Inspection', action: 'Violations were cited in the following area(s).', critical_flag: 'Not Critical', score: '20', grade: null, ...fields } });
+
+const hpd = (fields) => baseItem({ source: 'nyc-hpd-open-violations', kind: 'housing_violation_tally', identity: fields.buildingid, title: fields.streetname, fields: {
+    boro: 'BROOKLYN', zip: '11208', last: '2026-10-12T00:00:00.000', ...fields } });
+
+t('NYC HPD: a building with open hazardous violations is a landlord page with the counts by class', async () => {
+    const h = await boot();
+    try {
+        const eldert = hpd({ buildingid: '288857', housenumber: '760', streetname: 'ELDERT LANE', open: '1794', c: '423', b: '1118', a: '252' });
+        await importItem(h, eldert);
+        // Below RECORD_MIN_HAZARDOUS open class C violations, and nobody added the building: nothing is created.
+        await importItem(h, hpd({ buildingid: '11', housenumber: '1', streetname: 'QUIET PLACE', open: '12', c: '3', b: '6', a: '3' }));
+        const ents = await h.db.prepare("SELECT slug, name, kind, description FROM review_entities WHERE kind = 'landlord'").all();
+        assert.deepStrictEqual(ents.map((e) => [e.slug, e.name, e.description]), [['760-eldert-lane-brooklyn-ny', '760 Eldert Lane', 'Brooklyn, NY']]);
+
+        const page = (await req(h, 'GET', '/e/760-eldert-lane-brooklyn-ny')).text;
+        assert.match(page, /<span class="rv-big">1,794<\/span> open housing-code violations at 760 ELDERT LANE, Brooklyn 11208/);
+        assert.match(page, /<b>423<\/b> class C: immediately hazardous<\/li><li><b>1,118<\/b> class B: hazardous<\/li><li><b>252<\/b> class A: non-hazardous/);
+        assert.match(page, /href="https:\/\/hpdonline\.nyc\.gov\/hpdonline\/building\/288857"/);
+        assert.match(page, /Open means HPD has not recorded the violation as corrected/);
+        assert.ok(!/No aggregate/.test(page), 'no empty aggregate section beside the records');
+
+        // A newer week's count replaces the old one; a member's review of the same building lands on the same page.
+        await importItem(h, { ...eldert, revision: 2, fields: { ...eldert.fields, open: '1700', c: '400' } });
+        assert.match((await req(h, 'GET', '/e/760-eldert-lane-brooklyn-ny')).text, /<span class="rv-big">1,700<\/span> open/);
+        const ana = cookieFor(userToken({ subject: subject(), username: 'ana' }));
+        const r = await req(h, 'POST', '/review', { cookie: ana, form: { kind: 'landlord', name: '760 Eldert Lane', place: 'Brooklyn, NY' } });
+        assert.strictEqual(r.status, 303);
+        assert.match(String(r.headers.get('location')), /\/e\/760-eldert-lane-brooklyn-ny#write$/, 'found, not added again');
+
+        // The list and Search say it in a few words.
+        assert.match((await req(h, 'GET', '/k/landlord')).text, /760 Eldert Lane[\s\S]*?400 open hazardous HPD violations/);
+        const docs = (await outbox(h)).filter((x) => x.event_type === 'reviews.index_document.upserted');
+        assert.ok(docs.some((d) => /NYC HPD open housing-code violations: 1700 \(class C immediately hazardous 400, B hazardous 1118, A non-hazardous 252; as of \d{4}-\d{2}-\d{2}, latest inspection 2026-10-12\)/.test(d.payload.body || '')));
+    } finally { await h.stop(); }
+});
 
 t('company names read as the companies write them', () => {
     const { recordName } = require('../server/reviews/service');

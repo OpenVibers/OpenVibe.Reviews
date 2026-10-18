@@ -27,6 +27,31 @@ Glassdoor, Indeed, Blind, LowEndTalk, RTINGS, YouTube reviews, Amazon, G2, Capte
 forms were checked in a real browser on 2026-10-15 (WebHostingTalk, ApartmentRatings and Rate My Landlord have no
 search address that works). Reviews fetches and stores nothing from them; a result page is `noindex`.
 
+## What other sites show, brought by members
+
+A member can save the rating another site shows for something: Glassdoor, Indeed, Yelp, the BBB, Trustpilot, Google
+Maps or Tripadvisor. They do it at `/save` (the page's address, the rating, its scale, how many ratings) or with the
+OpenVibe Companion extension's "Save its rating to OpenVibe Reviews" button (0.5.0). That button reads the page's own
+structured data or star labels, only when pressed. The entity page shows the latest look per site, with the date and how
+many members saved it, beside that site's link (`review_seen_ratings`, migrations/0006). These are members' notes of
+what a page said, never signals and never in the aggregate. Capped at 60 a day per person; the person or an editor
+removes one.
+
+## Official records
+
+What a public body published about an entity, read through OpenVibe.Sources (`review_records`, migrations/0007, 0008).
+Each register has its own section on the entity page, never as signals or in the aggregate:
+
+| Source | Record | Entity |
+|---|---|---|
+| `cfpb-complaints-by-company` (weekly, CC0) | the CFPB complaint database's count for a company | an organization; added at 500 complaints or more |
+| `nyc-restaurant-inspections` (every 6 h) | NYC Health's inspection results: grade, score, violations (critical marked) | a restaurant per CAMIS id, named with its address |
+| `nyc-hpd-open-violations` (weekly) | NYC HPD's open housing-code violations by class (C immediately hazardous, B hazardous, A non-hazardous) | a landlord page per building, named by its address; added at 10 or more open class C |
+
+A record finds its entity by its external alias (`cfpb:`, `nyc-camis:`, `nyc-hpd:`). Otherwise it uses a same-named
+entity of that kind and place that holds no record of the same register, otherwise it adds one. So two restaurants of a
+chain, or two buildings, are never one page. Search gets one line per register.
+
 ## Owns
 
 The nine authority tables of §15.13, in Reviews' own PostgreSQL database (`ov_reviews` on the host's data role, ADR-035; schema in [migrations/](migrations/)):
@@ -43,7 +68,8 @@ The nine authority tables of §15.13, in Reviews' own PostgreSQL database (`ov_r
 | `review_trust_metadata` | editor trust decisions per source / signal / entity (exclude from the aggregate with a visible reason, limitation and verification notes), history kept |
 | `review_entity_links` | typed links between entities or to another service's EntityRef; a merge is a `merged_into` link (who, when, why), a split ends it |
 
-Helper tables: `review_aggregates` (every aggregate revision, immutable), `review_summary_citations`,
+Helper tables: `review_aggregates` (every aggregate revision, immutable), `review_member_reviews`, `review_seen_ratings`,
+`review_records` (official records), `review_summary_citations`,
 `review_corrections`, `review_audit` (append-only editorial log), `review_import_queue`,
 `review_sync_state`, plus the Publishing packages' `review_summary_reviews`, `review_summary_drafts`,
 `review_entity_redirects`, `review_discussion_refs`, `review_index_revisions` and the SDK's

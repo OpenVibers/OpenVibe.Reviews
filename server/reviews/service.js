@@ -122,11 +122,12 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         entitiesOfKind: db.prepare(`SELECT e.*, (SELECT COUNT(*) FROM review_member_reviews m WHERE m.entity_id = e.id AND m.status = 'published') AS member_count,
                                            (SELECT AVG(m.rating)::float8 FROM review_member_reviews m WHERE m.entity_id = e.id AND m.status = 'published') AS member_avg,
                                            (SELECT MAX((r.fields->>'complaints')::bigint) FROM review_records r WHERE r.entity_id = e.id AND r.status = 'active' AND r.kind = 'complaint_tally') AS complaints,
+                                           (SELECT MAX((r.fields->>'c')::bigint) FROM review_records r WHERE r.entity_id = e.id AND r.status = 'active' AND r.kind = 'housing_violation_tally') AS hazardous,
                                            (SELECT MAX(r.occurred_on) FROM review_records r WHERE r.entity_id = e.id AND r.status = 'active' AND r.kind = 'inspection_violation') AS inspected_on,
                                            (SELECT r.fields->>'grade' FROM review_records r WHERE r.entity_id = e.id AND r.status = 'active' AND r.kind = 'inspection_violation' AND r.fields->>'grade' IS NOT NULL
                                              ORDER BY r.occurred_on DESC LIMIT 1) AS grade
                                     FROM review_entities e WHERE e.state = 'active' AND e.kind = ?
-                                    ORDER BY member_count DESC, complaints DESC NULLS LAST, inspected_on DESC NULLS LAST, e.updated_at DESC LIMIT ? OFFSET ?`),
+                                    ORDER BY member_count DESC, complaints DESC NULLS LAST, hazardous DESC NULLS LAST, inspected_on DESC NULLS LAST, e.updated_at DESC LIMIT ? OFFSET ?`),
         countOfKind: db.prepare("SELECT COUNT(*) AS n FROM review_entities WHERE state = 'active' AND kind = ?"),
         kindCounts: db.prepare("SELECT kind, COUNT(*) AS n FROM review_entities WHERE state = 'active' GROUP BY kind"),
         memberReviewsSince: db.prepare('SELECT COUNT(*) AS n FROM review_member_reviews WHERE author = ? AND created_at > ?'),
@@ -675,6 +676,8 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         if (live) {
             const rec = await recordsView(e.id);
             if (rec.complaints) lines.push(`CFPB consumer complaints: ${rec.complaints.count} in the CFPB's database (as of ${String(rec.complaints.as_of).slice(0, 10)})`);
+            const h = rec.housing;
+            if (h) lines.push(`NYC HPD open housing-code violations: ${h.open} (class C immediately hazardous ${h.c}, B hazardous ${h.b}, A non-hazardous ${h.a}; as of ${String(h.as_of).slice(0, 10)}${h.last ? `, latest inspection ${h.last}` : ''})`);
             const last = rec.inspections[0];
             if (last) lines.push(`NYC Health inspection ${last.date}: ${last.grade ? `grade ${last.grade}, ` : ''}${last.score != null ? `score ${last.score}, ` : ''}${last.violations.length} violation${last.violations.length === 1 ? '' : 's'} (${last.violations.filter((v) => v.critical).length} critical)`);
         }
@@ -943,12 +946,15 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
     }
 
     // ── Official records ─────────────────────────────────────
-    // What a public body published about an entity (migrations/0007): the CFPB complaint database's count for a
-    // company, NYC Health's inspection results for a restaurant. They find their entity by an external alias
-    // (cfpb:<company>, nyc-camis:<camis>), else by its name (and place), else add it: every NYC restaurant inspected,
-    // and the companies with RECORD_MIN_COMPLAINTS or more complaints. Never signals, never in the aggregate.
-    const RECORD_KINDS = new Set(['complaint_tally', 'inspection_violation']);
+    // What a public body published about an entity (migrations/0007, 0008): the CFPB complaint database's count for a
+    // company, NYC Health's inspection results for a restaurant, NYC HPD's open housing-code violations for an apartment
+    // building. They find their entity by an external alias (cfpb:<company>, nyc-camis:<camis>, nyc-hpd:<building>),
+    // else by its name (and place), else add it: every NYC restaurant inspected, the companies with
+    // RECORD_MIN_COMPLAINTS or more complaints, the buildings with RECORD_MIN_HAZARDOUS or more open class C
+    // violations (a landlord entity named by its address). Never signals, never in the aggregate.
+    const RECORD_KINDS = new Set(['complaint_tally', 'inspection_violation', 'housing_violation_tally']);
     const RECORD_MIN_COMPLAINTS = 500;
+    const RECORD_MIN_HAZARDOUS = 10;
     const BOROUGHS = { manhattan: 'Manhattan', brooklyn: 'Brooklyn', queens: 'Queens', bronx: 'Bronx', 'staten island': 'Staten Island' };
     function recordTarget(item) {
         const f = item.fields || {};
@@ -956,6 +962,14 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             const company = String(f.company || item.identity || '').trim();
             if (!company) return null;
             return { alias: `cfpb:${company.slice(0, 200)}`, name: recordName(company), kind: 'organization', place: null, create: Number(f.complaints) >= RECORD_MIN_COMPLAINTS };
+        }
+        if (item.kind === 'housing_violation_tally') {
+            const building = String(f.buildingid || item.identity || '').trim();
+            const number = String(f.housenumber || '').trim();
+            const street = recordName(String(f.streetname || '').trim());
+            if (!/^\d{1,12}$/.test(building) || !number || !street) return null;
+            const boro = BOROUGHS[String(f.boro || '').trim().toLowerCase()] || 'New York';
+            return { alias: `nyc-hpd:${building}`, name: `${number} ${street}`.slice(0, 200), kind: 'landlord', place: `${boro}, NY`, create: Number(f.c) >= RECORD_MIN_HAZARDOUS };
         }
         const camis = String(f.camis || '').trim();
         if (!/^\d{1,12}$/.test(camis) || !f.dba) return null;
@@ -1011,12 +1025,16 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             const entityId = target ? await recordEntity(target, actor) : null;
             if (!entityId) return { outcome: 'unchanged', item: null, signal: null };
             const f = item.fields || {};
+            const count = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : null);
             const keep = item.kind === 'complaint_tally'
-                ? { company: String(f.company || item.identity).slice(0, 200), complaints: Number.isFinite(Number(f.complaints)) ? Number(f.complaints) : null }
+                ? { company: String(f.company || item.identity).slice(0, 200), complaints: count(f.complaints) }
+                : item.kind === 'housing_violation_tally'
+                ? { buildingid: String(f.buildingid || item.identity).slice(0, 12), boro: f.boro == null ? null : String(f.boro).slice(0, 40), housenumber: f.housenumber == null ? null : String(f.housenumber).slice(0, 20),
+                    streetname: f.streetname == null ? null : String(f.streetname).slice(0, 120), zip: f.zip == null ? null : String(f.zip).slice(0, 10), open: count(f.open), c: count(f.c), b: count(f.b), a: count(f.a) }
                 : Object.fromEntries(['camis', 'dba', 'boro', 'building', 'street', 'zipcode', 'cuisine', 'inspection_type', 'action', 'violation_code', 'violation', 'critical_flag', 'score', 'grade']
                     .map((k) => [k, f[k] == null ? null : String(f[k]).slice(0, 500)]));
             const values = {
-                entity_id: entityId, occurred_on: item.kind === 'inspection_violation' ? dayOf(f.inspection_date) : null, fields: JSON.stringify(keep),
+                entity_id: entityId, occurred_on: item.kind === 'inspection_violation' ? dayOf(f.inspection_date) : item.kind === 'housing_violation_tally' ? dayOf(f.last) : null, fields: JSON.stringify(keep),
                 item_revision: item.revision, retrieved_at: new Date(prov.retrieved_at).toISOString(), now: t,
             };
             if (row) await q.updateRecord.run({ ...values, id: row.id });
@@ -1026,10 +1044,10 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         });
     }
 
-    /** An entity's official records, for its page: the CFPB count, and NYC inspections grouped by day (newest first). */
+    /** An entity's official records, for its page: the CFPB count, HPD's open violations, NYC inspections by day (newest first). */
     async function recordsView(entityId) {
         const rows = await q.recordsOf.all([...await closure(entityId)]);
-        const out = { complaints: null, inspections: [], restaurant: null };
+        const out = { complaints: null, housing: null, inspections: [], restaurant: null };
         const byDay = new Map();
         for (const r of rows) {
             const f = r.fields && typeof r.fields === 'object' ? r.fields : parse(r.fields, {});
@@ -1037,6 +1055,13 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
                 if (!out.complaints || Number(f.complaints) > out.complaints.count) {
                     out.complaints = { company: f.company, count: Number(f.complaints), as_of: r.retrieved_at,
                         url: `https://www.consumerfinance.gov/data-research/consumer-complaints/search/?company=${encodeURIComponent(f.company)}&dateRange=All&searchField=all&tab=Map` };
+                }
+                continue;
+            }
+            if (r.kind === 'housing_violation_tally') {
+                if (!out.housing || Number(f.c) > out.housing.c) {
+                    out.housing = { building: f.buildingid, address: [f.housenumber, f.streetname].filter(Boolean).join(' ') || null, boro: f.boro, zip: f.zip,
+                        open: f.open, c: f.c, b: f.b, a: f.a, last: r.occurred_on, as_of: r.retrieved_at, url: `https://hpdonline.nyc.gov/hpdonline/building/${encodeURIComponent(f.buildingid)}` };
                 }
                 continue;
             }
