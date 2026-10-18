@@ -30,7 +30,7 @@ t('NYC HPD: a building with open hazardous violations is a landlord page with th
         assert.deepStrictEqual(ents.map((e) => [e.slug, e.name, e.description]), [['760-eldert-lane-brooklyn-ny', '760 Eldert Lane', 'Brooklyn, NY']]);
 
         const page = (await req(h, 'GET', '/e/760-eldert-lane-brooklyn-ny')).text;
-        assert.match(page, /<span class="rv-big">1,794<\/span> open housing-code violations at 760 ELDERT LANE, Brooklyn 11208/);
+        assert.match(page, /<span class="rv-big">1,794<\/span> open housing-code violations at 760 Eldert Lane, Brooklyn 11208/);
         assert.match(page, /<b>423<\/b> class C: immediately hazardous<\/li><li><b>1,118<\/b> class B: hazardous<\/li><li><b>252<\/b> class A: non-hazardous/);
         assert.match(page, /href="https:\/\/hpdonline\.nyc\.gov\/hpdonline\/building\/288857"/);
         assert.match(page, /Open means HPD has not recorded the violation as corrected/);
@@ -97,7 +97,7 @@ t('CFPB counts and NYC inspections land on entities, shown as official records, 
         const rest = await h.db.prepare("SELECT slug, name, kind, description FROM review_entities WHERE kind = 'restaurant'").all();
         assert.deepStrictEqual(rest.map((e) => [e.slug, e.name, e.description]), [['the-coffee-club-9526-4-avenue-brooklyn-ny', 'The Coffee Club', '9526 4 Avenue, Brooklyn, NY']]);
         const rp = await req(h, 'GET', '/e/the-coffee-club-9526-4-avenue-brooklyn-ny');
-        assert.match(rp.text, /NYC Health inspections of The Coffee Club at 9526 4 AVENUE, Brooklyn 11209 \(Coffee\/Tea\), newest first/);
+        assert.match(rp.text, /NYC Health inspections of The Coffee Club at 9526 4 Avenue, Brooklyn 11209 \(Coffee\/Tea\), newest first/);
         const firstLi = rp.text.indexOf('rv-grade-a'), olderLi = rp.text.indexOf('Food contact surface not properly washed.');
         assert.ok(firstLi > 0 && olderLi > firstLi, 'the newest inspection (grade A) comes first');
         assert.match(rp.text, /<span class="rv-tag rv-critical">Critical<\/span> Food contact surface not properly washed\./);

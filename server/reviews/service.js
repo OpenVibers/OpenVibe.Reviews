@@ -1060,12 +1060,12 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             }
             if (r.kind === 'housing_violation_tally') {
                 if (!out.housing || Number(f.c) > out.housing.c) {
-                    out.housing = { building: f.buildingid, address: [f.housenumber, f.streetname].filter(Boolean).join(' ') || null, boro: f.boro, zip: f.zip,
+                    out.housing = { building: f.buildingid, address: [f.housenumber, f.streetname && recordName(String(f.streetname))].filter(Boolean).join(' ') || null, boro: f.boro, zip: f.zip,
                         open: f.open, c: f.c, b: f.b, a: f.a, last: r.occurred_on, as_of: r.retrieved_at, url: `https://hpdonline.nyc.gov/hpdonline/building/${encodeURIComponent(f.buildingid)}` };
                 }
                 continue;
             }
-            if (!out.restaurant) out.restaurant = { camis: f.camis, address: [f.building, f.street].filter(Boolean).join(' ') || null, boro: f.boro, zipcode: f.zipcode, cuisine: f.cuisine };
+            if (!out.restaurant) out.restaurant = { camis: f.camis, address: [f.building, f.street && recordName(String(f.street))].filter(Boolean).join(' ') || null, boro: f.boro, zipcode: f.zipcode, cuisine: f.cuisine };
             const day = r.occurred_on || 'unknown';
             if (!byDay.has(day)) byDay.set(day, { date: r.occurred_on, type: f.inspection_type, action: f.action, score: null, grade: null, violations: [] });
             const d = byDay.get(day);
