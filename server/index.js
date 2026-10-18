@@ -30,7 +30,7 @@ const { createPgTelemetrySink, startTelemetryRetention } = require('openvibe-sdk
  * its own database (start's `givenDb`), which stays open. `exit` and `signals` are injectable so a test can watch
  * the stop and no test process installs signal handlers.
  */
-function createLifecycle({ server, db, valkey = null, platform, timers = [], telemetry = null, retention = null, closeDb = true, exit, signals, log, subscriptions = null } = {}) {
+function createLifecycle({ server, db, valkey = null, platform, timers = [], telemetry = null, retention = null, closeDb = true, exit, signals, log, subscriptions = null, background = null } = {}) {
     return gracefulStop({
         name: 'Reviews', server, log, drainMs: 8000, deadlineMs: 10000, deadlineExitCode: 0, exit, signals,
         stop: [
@@ -40,6 +40,7 @@ function createLifecycle({ server, db, valkey = null, platform, timers = [], tel
         ],
         close: [
             async () => { if (retention) await retention.stop(); if (telemetry) await telemetry.stop(); },
+            async () => { if (background) await background(); },
             () => { if (closeDb) return db.close(); },
             () => { if (valkey) return valkey.close(); },
         ],
@@ -76,8 +77,15 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         : null);
     const app = createApp({ config, telemetry, svc, viewers, platform, sources, sync, keys, db, log, rateLimits, fetchImpl, limitsNow, indexnow, accountData, accountSend });
 
-    // Search holds whatever the current rules say (idempotent: unchanged documents are not re-sent).
-    try { await svc.reconcileIndex(); } catch (err) { log.warn(`[Reviews] index reconcile: ${err.message}`); }
+    // Search holds whatever the current rules say (idempotent: unchanged documents are not re-sent). A running service
+    // does it after it listens: 6,800 entities took 30 s on 2026-10-18, past ovhost's readiness wait, and the deploy
+    // was rolled back. Without workers (tests, one-off scripts) it is done before start() returns.
+    let stopping = false;
+    let reconciling = null;
+    const reconcile = () => svc.reconcileIndex({ stopped: () => stopping })
+        .then((r) => { if (r.sent) log.log(`[Reviews] index reconcile: ${r.sent} document(s) re-sent`); })
+        .catch((err) => log.warn(`[Reviews] index reconcile: ${err.message}`));
+    if (!workers) await reconcile();
 
     const timers = [];
     if (workers) {
@@ -99,6 +107,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         server.keepAliveTimeout = 65000;
         log.log(`[Reviews] ${config.nodeEnv} on http://${config.host}:${config.port} → ${config.baseUrl}`);
     }
+    if (workers) reconciling = reconcile();
     // The two account subscriptions at OpenVibe.Events, created when missing; off without workers, EVENTS_URL,
     // REVIEWS_EVENTS_SECRET or the client secret.
     let subscriptions = null;
@@ -109,7 +118,8 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         });
     }
 
-    const lifecycle = createLifecycle({ server, db, telemetry, retention, platform, timers, closeDb: !givenDb, signals, exit, log, subscriptions });
+    const lifecycle = createLifecycle({ server, db, telemetry, retention, platform, timers, closeDb: !givenDb, signals, exit, log, subscriptions,
+        background: async () => { stopping = true; if (reconciling) await reconciling; } });
 
     async function stop() {
         return lifecycle.stop('stop');

@@ -2093,17 +2093,20 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         // Search reconciliation ---------------------------------------------------------------
         /** Stamp + enqueue the entity's current document on the caller's handle (used by tests/ops). */
         syncIndex: syncEntity,
-        async reconcileIndex() {
-            return await tx(async () => {
-                let sent = 0;
-                for (const { id } of await q.allEntityIds.all()) {
-                    if (await sequencer.current('reviews', 'entity', id) == null && (await q.entity.get(id)).state !== 'active') continue;
+        /** Re-send every entity's document that differs from what Search holds; one short transaction per entity, so a
+         *  running service is never held up behind it. `stopped()` ends it early (a shutdown). */
+        async reconcileIndex({ stopped = () => false } = {}) {
+            let sent = 0;
+            for (const { id } of await q.allEntityIds.all()) {
+                if (stopped()) break;
+                sent += await tx(async () => {
                     const before = await sequencer.current('reviews', 'entity', id);
+                    if (before == null && (await q.entity.get(id)).state !== 'active') return 0;
                     const doc = await syncEntity(id);
-                    if (doc && doc.revision !== before) sent++;
-                }
-                return { sent };
-            });
+                    return doc && doc.revision !== before ? 1 : 0;
+                });
+            }
+            return { sent };
         },
 
         async stats() {
