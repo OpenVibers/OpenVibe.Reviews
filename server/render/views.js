@@ -229,13 +229,18 @@ ${entity ? html`<input type="hidden" name="entity" value="${entity.slug}"><p>For
 
 const GRADE_TEXT = { A: 'Grade A', B: 'Grade B', C: 'Grade C', N: 'Not yet graded', Z: 'Grade pending', P: 'Grade pending (reopening)' };
 
-/** What public bodies published about it: the CFPB's complaint count, NYC Health's inspections. Records, not reviews. */
+/** What public bodies published about it: the CFPB's complaint count, NYC HPD's open violations, NYC Health's inspections. Records, not reviews. */
 function recordsSection(rec, entity) {
-    if (!rec.complaints && !rec.inspections.length) return '';
+    if (!rec.complaints && !rec.housing && !rec.inspections.length) return '';
+    const h = rec.housing;
     const r = rec.restaurant;
     return html`<section id="records" aria-labelledby="rec-h"><h2 id="rec-h">Official records</h2>
 ${rec.complaints ? html`<div class="rv-record"><p><span class="rv-big">${n(rec.complaints.count)}</span> complaint${rec.complaints.count === 1 ? '' : 's'} about ${rec.complaints.company} in the Consumer Financial Protection Bureau's complaint database, from every year since 2011 (counted ${t(rec.complaints.as_of)}). <a href="${rec.complaints.url}" target="_blank" rel="noopener">Read them on consumerfinance.gov</a></p>
 <p class="rv-muted">These are complaints consumers sent about financial products, not findings: the CFPB does not verify them, and a company with more customers gets more.</p></div>` : ''}
+${h ? html`<div class="rv-record"><p><span class="rv-big">${n(h.open)}</span> open housing-code violation${h.open === 1 ? '' : 's'} at ${h.address || entity.name}, ${h.boro ? String(h.boro).toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : 'New York'}${h.zip ? ` ${h.zip}` : ''}, in the NYC Department of Housing Preservation and Development's records (counted ${t(h.as_of)}${h.last ? html`; latest inspection ${t(h.last)}` : ''}).</p>
+<ul class="rv-classes"><li><b>${n(h.c)}</b> class C: immediately hazardous</li><li><b>${n(h.b)}</b> class B: hazardous</li><li><b>${n(h.a)}</b> class A: non-hazardous</li></ul>
+<p><a href="${h.url}" target="_blank" rel="noopener">The building on HPD Online</a></p>
+<p class="rv-muted">Open means HPD has not recorded the violation as corrected. Some stay open after a repair until the owner certifies it, so the count can run ahead of the building's condition today.</p></div>` : ''}
 ${rec.inspections.length ? html`<div class="rv-record"><p>NYC Health inspections${r && r.address ? html` of ${entity.name} at ${r.address}, ${r.boro || 'New York'}${r.zipcode ? ` ${r.zipcode}` : ''}` : ''}${r && r.cuisine ? html` (${r.cuisine})` : ''}, newest first.</p>
 <ol class="rv-inspections">${rec.inspections.map((d) => html`<li><p><b>${d.date ? t(d.date) : 'Date not stated'}</b>${d.grade ? html` · <span class="rv-grade rv-grade-${String(d.grade).toLowerCase()}">${GRADE_TEXT[d.grade] || `Grade ${d.grade}`}</span>` : ''}${d.score != null && !Number.isNaN(d.score) ? html` · score ${String(d.score)}` : ''}${d.type ? html` <span class="rv-muted">· ${d.type}</span>` : ''}</p>
 ${d.violations.length ? html`<ul class="rv-violations">${d.violations.map((v) => html`<li>${v.critical ? html`<span class="rv-tag rv-critical">Critical</span> ` : ''}${v.text || v.code}</li>`)}</ul>` : html`<p class="rv-muted">${d.action || 'No violations were recorded.'}</p>`}</li>`)}</ol>
@@ -260,9 +265,10 @@ ${actor && actor.subject ? html`<form method="post" action="/review" class="rv-f
 <p class="rv-muted">Looking for what other sites say? <a href="/everywhere">Search every review site</a>.</p></article>`;
 }
 
-/** A list entry's official record, in a few words: its CFPB complaints, or its latest NYC inspection. */
+/** A list entry's official record, in a few words: its CFPB complaints, its open HPD class C violations, or its latest NYC inspection. */
 function recordLine(x) {
     if (x.complaints != null) return html`<span class="rv-muted"> · ${n(x.complaints)} CFPB complaint${x.complaints === 1 ? '' : 's'}</span>`;
+    if (x.hazardous != null) return html`<span class="rv-muted"> · ${n(x.hazardous)} open hazardous HPD violation${Number(x.hazardous) === 1 ? '' : 's'}</span>`;
     if (x.inspected_on) return html`<span class="rv-muted"> · inspected ${t(x.inspected_on)}${x.grade ? html`, ${GRADE_TEXT[x.grade] || `grade ${x.grade}`}` : ''}</span>`;
     return '';
 }
@@ -441,7 +447,7 @@ ${form}</section>`;
 function entityPage(p, { discussion, actor, flash, members = null, elsewhere = [], seen = {}, records = null, reviewError = null, reviewValues = null }) {
     const en = p.entity;
     // Something of its own to show (members' reviews or official records): the empty source sections stay out.
-    const own = (members && members.stats.count) || (records && (records.complaints || records.inspections.length));
+    const own = (members && members.stats.count) || (records && (records.complaints || records.housing || records.inspections.length));
     const limits = [];
     for (const s of p.sources) {
         if (s.stale) limits.push(html`${s.name || s.key}: the source was stale when last checked${s.last_success_at ? html` (last successful fetch ${t(s.last_success_at)})` : ''}.`);
