@@ -2,7 +2,13 @@
 
 > Review signals gathered across sources with provenance, entity resolution and honest aggregates.
 
-**Status:** alpha (roadmap Wave 17, Reviews half). Tested against stub upstreams and **public at `openvibe.reviews` since 2026-10-09**, after an independent pre-launch security review whose fixes shipped first. The database holds nothing yet (0 entities, 0 signals): the first entities come from editors, signals only from Sources, and no Sources review source is enabled.
+**Status:** alpha (roadmap Wave 17, Reviews half). **Public at `openvibe.reviews` since 2026-10-09**, after an independent pre-launch security review whose fixes shipped first. On 2026-10-18 it holds about 5,700 entities:
+- 19 Steam games with review signals from Sources;
+- 550 companies with CFPB complaint counts;
+- 1,155 NYC restaurants with their health inspections;
+- 4,000 NYC apartment buildings with HPD's open violations.
+
+Members write their own reviews and save the ratings other sites show.
 **Domain:** `openvibe.reviews` · **Port:** 4830 · **Service id:** `reviews`
 **Plan:** OpenVibe End-to-End Realignment & Implementation Plan, revision 3 — roadmap Wave 17, §15.13, §29, §32.
 **License:** AGPL-3.0 (same as every OpenVibe service).
@@ -26,6 +32,14 @@ places, where it is, open each site's own search in new tabs: Google Maps, Yelp,
 Glassdoor, Indeed, Blind, LowEndTalk, RTINGS, YouTube reviews, Amazon, G2, Capterra, Product Hunt and Reddit. The URL
 forms were checked in a real browser on 2026-10-15 (WebHostingTalk, ApartmentRatings and Rate My Landlord have no
 search address that works). Reviews fetches and stores nothing from them; a result page is `noindex`.
+
+## Members' reviews
+
+Any signed-in OpenVibe member reviews anything of the kinds Reviews lists, adding it first when it is not there yet. The kinds are employers, landlords, restaurants, local businesses, hosting providers, products, apps, games, vehicles, communities, platforms and more. A local kind needs where it is.
+
+A review has 1 to 5 stars, a title, 30 to 5,000 characters, and how the member knows it (a current or former employee or tenant, a customer…). There is one review per member per entity, which they can rewrite. A member can add 20 things and write 30 reviews a day.
+
+The entity page shows members' reviews as theirs: "Reviews from OpenVibe members", with their own average. They are never mixed into the sources' aggregate. The member or an editor removes a review (`review_member_reviews`, migrations/0004).
 
 ## What other sites show, brought by members
 
