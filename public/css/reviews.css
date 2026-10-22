@@ -143,3 +143,31 @@ code { overflow-wrap: anywhere; }
 .rv-violations li { margin: 2px 0; }
 .rv-critical { background: color-mix(in srgb, #dc2626 16%, transparent); color: inherit; }
 .rv-grade { font-weight: 700; }
+
+/* The front page (views.home): the numbers beside the hero, inspections, ranked records, questions, links around. */
+/* The showcase sections sit in the page column, which has its own gutter (a second one left 240px of a 320px phone). */
+.rv-main .sc-hero, .rv-main .sc-sec { padding-left: 0; padding-right: 0; }
+.rv-main .sc-hero { padding-top: 16px; }
+.rv-h-panel { padding: 18px; border: 1px solid var(--rv-line); border-radius: 16px; background: var(--rv-panel); }
+main .rv-h-panel-h { margin: 0 0 12px; padding: 0; border: 0; font-size: 1rem; }
+.rv-h-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.rv-h-stats div { display: flex; flex-direction: column-reverse; padding: 10px 12px; border: 1px solid var(--rv-line); border-radius: 12px; background: var(--rv-bg); }
+.rv-h-stats dt { font-size: 13px; line-height: 1.35; color: var(--rv-muted); }
+.rv-h-stats dd { margin: 0; font-size: 1.55rem; font-weight: 800; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.rv-h-list, .rv-h-rank { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); }
+.rv-h-list a, .rv-h-rank a { display: flex; flex-direction: column; gap: 2px; height: 100%; padding: 12px 14px; border: 1px solid var(--rv-line); border-radius: 12px; background: var(--rv-panel); color: var(--rv-text); text-decoration: none; font-size: 14.5px; }
+.rv-h-list a:hover, .rv-h-rank a:hover { border-color: var(--rv-accent); }
+.rv-h-list b, .rv-h-rank b { font-size: 1rem; }
+.rv-h-crit { color: var(--rv-warn); }
+.rv-h-rank { counter-reset: rv-rank; }
+.rv-h-rank li { counter-increment: rv-rank; }
+.rv-h-rank b::before { content: counter(rv-rank) ". "; color: var(--rv-muted); font-weight: 600; }
+.rv-h-faq details { border-bottom: 1px solid var(--rv-line); padding: 10px 0; }
+.rv-h-faq summary { cursor: pointer; font-weight: 600; }
+.rv-h-faq details p { margin: 8px 0 0; color: var(--rv-muted); max-width: 760px; }
+.rv-h-links { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); }
+.rv-h-links a { display: block; height: 100%; padding: 12px 14px; border: 1px solid var(--rv-line); border-radius: 12px; background: var(--rv-panel); color: var(--rv-text); text-decoration: none; }
+.rv-h-links a:hover { border-color: var(--rv-accent); }
+.rv-h-links b { display: block; }
+.rv-h-links small { display: block; color: var(--rv-muted); font-size: 13.5px; }
+@media (max-width: 560px) { .rv-h-stats dd { font-size: 1.3rem; } }

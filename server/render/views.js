@@ -92,8 +92,9 @@ function aggregateLine(agg) {
 }
 
 /** The front page opens with what OpenVibe.Reviews is for (openvibe-shared/showcase), then the entities. */
-function reviewsHero() {
+function reviewsHero(aside = null) {
     return showcase.hero({
+        aside: aside ? { html: aside } : undefined,
         eyebrow: 'OpenVibe.Reviews',
         title: 'Employers, landlords, restaurants, hosts.', accent: 'Every review in one place.',
         lede: 'Read and write reviews of where you work, rent, eat and host, beside the scores other sites publish and every review site\'s own page for it. Every number says where it came from.',
@@ -286,19 +287,81 @@ ${pages > 1 ? html`<nav class="rv-pager" aria-label="Pages">${page > 1 ? html`<a
 </article>`;
 }
 
-function home({ entities, total, editor, recent = [], kinds = {} }) {
+// The questions the front page answers, shown on it and given to search engines as FAQPage (only what is shown).
+const HOME_FAQ = [
+    { q: 'Where do the scores come from?', a: 'From named sources that OpenVibe.Sources reads within their terms, such as Steam\'s review counts. Each signal keeps its source, the item and when it was read, and the aggregate lists its inputs and method. With no qualifying signal there is no score at all.' },
+    { q: 'What are the official records?', a: 'What public bodies published: NYC Health restaurant inspections, NYC HPD open housing violations and the complaints consumers sent the CFPB. They sit in their own section of a page and never feed a score.' },
+    { q: 'Can I write a review?', a: 'Yes. Sign in with your OpenVibe account, name the employer, landlord, restaurant or anything else, and write. Members\' reviews are labelled as theirs and kept apart from the sources\' numbers.' },
+    { q: 'Do you copy reviews from Glassdoor, Yelp or Google?', a: 'No. Every page links each review site\'s own page for it, and a member can save the rating a site shows (with the date and a link). The words stay with the people who wrote them.' },
+    { q: 'What if a page is wrong?', a: 'Anyone signed in can send the editors a correction from the page. An accepted correction is published with a note, and every earlier version stays in the page\'s history.' },
+];
+const BORO = (s) => String(s || '').toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
+
+function homeStats(stats, sites) {
+    const tiles = [
+        ['Pages', stats.pages],
+        stats.records ? ['Official records', stats.records] : null,
+        stats.signals ? ['Ratings from sources', stats.signals] : null,
+        ['Review sites one search opens', sites],
+        stats.memberReviews ? ['Members\' reviews', stats.memberReviews] : null,
+        stats.seen ? ['Ratings saved from other sites', stats.seen] : null,
+    ].filter(Boolean);
+    return String(html`<div class="rv-h-panel"><h2 class="rv-h-panel-h">On OpenVibe.Reviews</h2><dl class="rv-h-stats">${tiles.map(([k, v]) => html`<div><dt>${k}</dt><dd>${n(v)}</dd></div>`)}</dl></div>`);
+}
+
+function home({ entities, total, editor, recent = [], kinds = {}, stats = null, sites = 0, inspections = [], hazardous = [], complaints = [] }) {
     const browse = ['employer', 'landlord', 'restaurant', 'hosting', 'business', 'organization', 'product', 'app', 'game', 'vehicle', 'community', 'platform'];
-    return html`${raw(reviewsHero())}
+    return html`${raw(reviewsHero(stats ? homeStats(stats, sites) : null))}
 <section class="sc-sec" aria-labelledby="rv-kinds-h"><h2 id="rv-kinds-h">Browse and review</h2>
 <ul class="rv-kinds">${browse.map((k) => html`<li><a href="/k/${k}"><b>${KIND_PLURAL[k]}</b><span class="rv-muted">${kinds[k] ? `${n(kinds[k])} here` : 'Be the first'}</span></a></li>`)}</ul>
 <p><a class="rv-button" href="/review">Write a review</a> <a href="/everywhere">Search every review site</a></p></section>
 ${recent.length ? html`<section class="sc-sec" aria-labelledby="rv-recent-h"><h2 id="rv-recent-h">Latest reviews from members</h2>
 <ul class="rv-recent">${recent.map((r) => html`<li><a href="/e/${r.entity.slug}#${r.id}"><span class="rv-card-head"><b>${r.entity.name}</b> <span class="rv-tag">${KIND_LABEL[r.entity.kind]}</span></span>${stars(r.rating)} <b>${r.title}</b><br><span class="rv-muted">${r.body.length > 160 ? `${r.body.slice(0, 157)}…` : r.body}</span></a></li>`)}</ul></section>` : ''}
-${raw(reviewsFeatures())}
 <section id="entities" class="sc-sec" aria-labelledby="rv-board-h"><h2 id="rv-board-h">Scores from sources</h2>
 ${entities.length ? html`<p class="sc-lede">Each score comes from named sources. Open one to see every signal behind it, when it was read, and how the number was worked out.</p><ul class="rv-board">${entities.map(boardCard)}</ul>`
         : html`<p class="rv-muted">Nothing yet. Entities appear here once a source has stated something about them (or an editor has published a summary).</p>`}
-<p class="rv-muted">${n(total)} reviewed in total. <a href="/feed.atom">Atom</a> · <a href="/feed.json">JSON Feed</a>${editor ? html` · <a href="/editor">Editor desk</a>` : ''}</p></section>`;
+<p class="rv-muted">${n(total)} pages in all. <a href="/feed.atom">Atom</a> · <a href="/feed.json">JSON Feed</a>${editor ? html` · <a href="/editor">Editor desk</a>` : ''}</p></section>
+${inspections.length ? html`<section class="sc-sec" aria-labelledby="rv-insp-h"><h2 id="rv-insp-h">Latest restaurant inspections</h2>
+<p class="sc-lede">New York City restaurants by their newest NYC Health inspection, as the inspector recorded it. A letter grade is given only at some inspections.</p>
+<ul class="rv-h-list">${inspections.map((x) => html`<li><a href="/e/${e(x.slug)}"><b>${x.name}</b><span class="rv-muted">${[x.cuisine, BORO(x.boro)].filter(Boolean).join(' · ')}</span>
+<span>Inspected ${t(x.occurred_on)}: ${n(x.violations)} violation${x.violations === 1 ? '' : 's'}${x.critical ? html`, <b class="rv-h-crit">${n(x.critical)} critical</b>` : ''}</span>${x.grade ? html`<span class="rv-muted">Latest grade on record: ${GRADE_TEXT[x.grade] || `Grade ${x.grade}`}</span>` : ''}</a></li>`)}</ul>
+<p><a href="/k/restaurant">Every restaurant (${n(kinds.restaurant || 0)})</a></p></section>` : ''}
+${hazardous.length ? html`<section class="sc-sec" aria-labelledby="rv-hpd-h"><h2 id="rv-hpd-h">Buildings with the most hazardous open violations</h2>
+<p class="sc-lede">Buildings by their open class C (immediately hazardous) violations in NYC HPD's records. Open means HPD has not recorded a violation as corrected, so the count can run ahead of a building's condition today.</p>
+<ol class="rv-h-rank">${hazardous.map((x) => html`<li><a href="/e/${e(x.slug)}"><b>${x.name}</b><span class="rv-muted">${BORO(x.boro)}</span><span>${n(x.c)} class C · ${n(x.open)} open in all</span></a></li>`)}</ol>
+<p><a href="/k/landlord">Every building (${n(kinds.landlord || 0)})</a></p></section>` : ''}
+${complaints.length ? html`<section class="sc-sec" aria-labelledby="rv-cfpb-h"><h2 id="rv-cfpb-h">Companies with the most CFPB complaints</h2>
+<p class="sc-lede">Complaints consumers sent the Consumer Financial Protection Bureau about financial products. They are not findings: the CFPB does not verify them, and a company with more customers gets more.</p>
+<ol class="rv-h-rank">${complaints.map((x) => html`<li><a href="/e/${e(x.slug)}"><b>${x.name}</b><span>${n(x.complaints)} complaints</span></a></li>`)}</ol>
+<p><a href="/k/organization">Every company (${n(kinds.organization || 0)})</a></p></section>` : ''}
+${raw(reviewsFeatures())}
+${raw(showcase.steps({
+        title: 'How it works',
+        items: [
+            { title: 'Sources are read within their terms', text: 'OpenVibe.Sources collects public ratings and official records, each with its source, item and the time it was read.' },
+            { title: 'Every number shows its inputs', text: 'A score is worked out from the signals by a published method, and the page lists them all. No signals, no score.', href: '/about' },
+            { title: 'Members add their own reviews', text: 'Signed-in members write reviews and save the ratings other sites show, kept apart from the sources\' numbers.', href: '/review' },
+            { title: 'Every review site is one click away', text: 'Each page links the review sites that cover its kind (Google, Yelp, Glassdoor, the BBB, Trustpilot, Reddit and more), searched for that name.', href: '/everywhere' },
+        ],
+    }))}
+<section class="sc-sec rv-h-faq" aria-labelledby="rv-faq-h"><h2 id="rv-faq-h">Questions</h2>${HOME_FAQ.map((f) => html`<details><summary>${f.q}</summary><p>${f.a}</p></details>`)}</section>
+<section class="sc-sec" aria-labelledby="rv-links-h"><h2 id="rv-links-h">Find your way around</h2><ul class="rv-h-links">
+<li><a href="/review"><b>Write a review</b><small>Employers, landlords, restaurants, hosts and more.</small></a></li>
+<li><a href="/everywhere"><b>Every review site, one search</b><small>${n(sites)} sites, each searched for the name you type.</small></a></li>
+<li><a href="/about"><b>How it works</b><small>Signals, the aggregate, summaries and corrections.</small></a></li>
+<li><a href="/k/restaurant"><b>Restaurants</b><small>NYC inspections, grades and critical violations.</small></a></li>
+<li><a href="/k/landlord"><b>Landlords</b><small>Buildings by their open HPD violations.</small></a></li>
+<li><a href="/updates"><b>What shipped</b><small>Every change to OpenVibe.Reviews itself.</small></a></li>
+</ul></section>`;
+}
+
+/** The front page's structured data: the site and its search, the scored pages as an ItemList, the questions shown. */
+function homeJsonLd({ base, entities }) {
+    const out = [{ '@context': 'https://schema.org', '@type': 'WebSite', name: 'OpenVibe.Reviews', url: `${base}/`,
+        potentialAction: { '@type': 'SearchAction', target: { '@type': 'EntryPoint', urlTemplate: `${base}/search?q={search_term_string}` }, 'query-input': 'required name=search_term_string' } }];
+    if (entities.length) out.push({ '@context': 'https://schema.org', '@type': 'ItemList', name: 'Scores from sources on OpenVibe.Reviews', numberOfItems: entities.length, itemListElement: entities.map((x, i) => ({ '@type': 'ListItem', position: i + 1, name: x.entity.name, url: `${base}${epath(x.entity)}` })) });
+    out.push({ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: HOME_FAQ.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })) });
+    return out;
 }
 
 /** /everywhere: one name opens every review site's own search for it (server/reviews/everywhere.js). */
@@ -663,7 +726,7 @@ function itemPage({ item, candidates, error = null }) {
 
 module.exports = {
     everywherePage,
-    home, aboutPage, searchPage, entityPage, historyPage, summaryRevisionPage, correctionPage,
+    home, homeJsonLd, aboutPage, searchPage, entityPage, historyPage, summaryRevisionPage, correctionPage,
     editorHome, newEntityPage, editEntityPage, itemPage, signInPage, errorBody, epath, signalValue, KIND_LABEL,
     reviewStartPage, kindPage, elsewhereLinks, savePage, KIND_PLURAL,
 };

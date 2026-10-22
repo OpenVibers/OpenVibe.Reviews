@@ -19,6 +19,7 @@ const { http } = require('openvibe-contracts');
 const { createSessionRoutes } = require('./auth/session');
 const { createApi } = require('./http/api');
 const { createPages } = require('./http/pages');
+const { createHome } = require('./reviews/home');
 const { createMachine } = require('./http/machine');
 const { createEvents } = require('./http/events');
 const { createActorLimits } = require('./http/actor-limits');
@@ -169,7 +170,7 @@ function createApp({ config, telemetry = null, svc, viewers, platform, sources, 
 
     app.post(['/e/*', '/editor/*'], limiter(10 * 60000, 120));
     app.post('/e/:slug/correct', limiter(60 * 60000, 20));
-    const pages = createPages({ svc, platform, sync, viewers, config, log, limits });
+    const pages = createPages({ svc, platform, sync, viewers, config, log, limits, home: createHome({ db }) });
     app.use(pages.router);
 
     app.use((req, res) => pages.errorPage(req, res, 404, 'Not found', 'Nothing lives at that address.'));
