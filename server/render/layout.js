@@ -67,7 +67,7 @@ function renderPage(o) {
     const { config } = o;
     if (!o.robots && !o.decision) throw new TypeError('renderPage needs explicit robots (or the gate decision)');
     // The front page's title says what the site is (search results show it); every other page is "<page> · OpenVibe.Reviews".
-    const title = o.title ? `${o.title} · ${SITE_NAME}` : o.path === '/' ? `${SITE_NAME}: ratings from named, linked sources` : SITE_NAME;
+    const title = o.title ? `${o.title} · ${SITE_NAME}` : o.path === '/' ? `${SITE_NAME}: reviews, ratings and public records` : SITE_NAME;
     const feeds = [
         { type: 'atom', title: `${SITE_NAME}: published summaries (Atom)`, href: '/feed.atom' },
         { type: 'json', title: `${SITE_NAME}: published summaries (JSON Feed)`, href: '/feed.json' },

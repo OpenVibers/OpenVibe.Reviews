@@ -30,6 +30,10 @@ const { renderPage, SITE_SUMMARY } = require('../render/layout');
 const views = require('../render/views');
 const { ratingForStructuredData } = require('../reviews/aggregate');
 const { actorMiddleware, crossSite } = require('./common');
+const everywhere = require('../reviews/everywhere');
+
+// The front page in search results and share cards (≤ 160 characters).
+const HOME_DESCRIPTION = 'Reviews of employers, landlords, restaurants and more, beside ratings from named sources, official records and a link to every review site.';
 
 const SCHEMA_TYPE = { product: 'Product', game: 'VideoGame', software: 'SoftwareApplication', service: 'Service', place: 'Place', organization: 'Organization', media: 'CreativeWork', other: 'Thing',
     employer: 'Organization', landlord: 'Organization', restaurant: 'Restaurant', business: 'LocalBusiness', hosting: 'Organization', app: 'SoftwareApplication', vehicle: 'Product' };
@@ -89,7 +93,7 @@ function summaryFromForm(b) {
     };
 }
 
-function createPages({ svc, platform, sync, viewers, config, log = console, limits }) {
+function createPages({ svc, platform, sync, viewers, config, log = console, limits, home = null }) {
     const router = express.Router();
     const form = express.urlencoded({ extended: false, limit: '200kb' });
     router.use(actorMiddleware(viewers, { services: false }));
@@ -147,13 +151,16 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
     }
 
     // ── Public ───────────────────────────────────────────────
-    router.get('/', async (req, res) => {
-        const all = await svc.listEntities({ limit: 1 });
-        send(req, res, 200, views.home({ entities: await svc.entitiesWithData(60), total: all.total, editor: isEditor(req), recent: await svc.recentMemberReviews(6), kinds: await svc.kindCounts() }), {
-            robots: 'index, follow', cache: 'public', active: 'home', path: '/', summary: SITE_SUMMARY, styles: [showcase.STYLESHEET],
-            jsonLd: seo.structuredData.webPage({ url: `${config.baseUrl}/`, name: 'OpenVibe.Reviews', description: 'Review signals from named sources, with provenance and honest aggregates.' }),
+    router.get('/', wrap(async (req, res) => {
+        const [all, entities, recent, kinds, stats, inspections, hazardous, complaints] = await Promise.all([
+            svc.listEntities({ limit: 1 }), svc.entitiesWithData(60), svc.recentMemberReviews(6), svc.kindCounts(),
+            home ? home.stats() : null, home ? home.latestInspections(8) : [], home ? home.mostHazardous(6) : [], home ? home.mostComplaints(6) : [],
+        ]);
+        send(req, res, 200, views.home({ entities, total: all.total, editor: isEditor(req), recent, kinds, stats, sites: everywhere.SITES.length, inspections, hazardous, complaints }), {
+            robots: 'index, follow', cache: 'public', active: 'home', path: '/', summary: SITE_SUMMARY, styles: [showcase.STYLESHEET], description: HOME_DESCRIPTION,
+            jsonLd: views.homeJsonLd({ base: config.baseUrl.replace(/\/+$/, ''), entities }),
         });
-    });
+    }));
     // What shipped on OpenVibe.Reviews: the shared update log every OpenVibe site has.
     router.get('/updates', (req, res) => send(req, res, 200, frame.updatesBody({ service: 'reviews', siteName: 'OpenVibe.Reviews' }) + `<script src="${ovServe.url('shipped.js')}" defer></script>`, { title: 'What shipped on OpenVibe.Reviews', robots: 'index, follow', cache: 'public', path: '/updates' }));
     router.get('/everywhere', (req, res) => {
