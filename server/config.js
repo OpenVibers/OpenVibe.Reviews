@@ -88,6 +88,11 @@ function load(env = process.env) {
             queueIntervalMs: int(env.REVIEWS_IMPORT_QUEUE_INTERVAL_MS, 15000),
         },
 
+        // The sitemaps' list of every active entity with its gate decision is built at most once in this window and
+        // shared (one build serves concurrent readers either way). Building it reads every entity's page view, so
+        // each crawler fetch of /sitemap.xml rebuilt it: ~30,000 queries a time on 2026-10-23. 0 = no reuse.
+        sitemapTtlMs: int(env.REVIEWS_SITEMAP_TTL_MS, isProduction ? 10 * 60 * 1000 : 0),
+
         // The indexability gate policy for entity pages (openvibe-publishing/seo).
         gate: {
             minWords: int(env.REVIEWS_GATE_MIN_WORDS, 60),
