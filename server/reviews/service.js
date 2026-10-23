@@ -42,6 +42,8 @@ const MAX_CORRECTION_NOTE = 2000;
 const CORRECTIONS_PER_PERSON_DAY = 20;
 const DAY_MS = 24 * 3600 * 1000;
 const MAX_AUDIT_TEXT = 2000;
+// Entities whose page view publicEntities() builds at once (the pool has a handful of connections for every reader).
+const PUBLIC_ENTITIES_PARALLEL = 8;
 // A summary is text with citations. Nothing in it can carry a score.
 const SUMMARY_KEYS = new Set(['overview', 'pros', 'cons', 'overview_signals', 'expected_revision', 'expectedRevision', 'message', 'publish', 'workflow', 'stub_provider', 'stubProvider', 'note', 'correction_note', 'correction_id']);
 const BODY_KEYS = ['overview', 'overview_signals', 'pros', 'cons'];
@@ -79,6 +81,7 @@ function recordName(raw) {
 }
 
 function createReviewsService({ db, stores, outbox, config, now = () => Date.now(), log = console, indexnow = null }) {
+    const publicList = { value: null, at: 0, building: null };   // publicEntities(): the last build and the one running
     const { revisions, reviews, redirects, discussions, sequencer } = stores;
     const access = createAccess(config);
     const origin = config.baseUrl;
@@ -2021,9 +2024,28 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
             }))).filter(Boolean);
         },
 
-        /** Every active entity with its decision (sitemaps). */
+        /**
+         * Every active entity with its decision (sitemaps). One build at a time, reused for config.sitemapTtlMs, and
+         * PUBLIC_ENTITIES_PARALLEL entities at once: a build reads each entity's page view (about five queries), and
+         * all at once (6,138 entities, 2026-10-23) it queued ~30,000 queries on the pool for a minute, each waiting
+         * ~800 ms, while every page waited behind them.
+         */
         async publicEntities() {
-            return (await Promise.all((await db.prepare("SELECT * FROM review_entities WHERE state = 'active' ORDER BY id").all()).map(async (e) => ({ entity: e, decision: await decide(e) }))));
+            const ttl = Number(config.sitemapTtlMs) || 0;
+            if (publicList.value && now() - publicList.at < ttl) return publicList.value;
+            if (!publicList.building) {
+                publicList.building = (async () => {
+                    const rows = await db.prepare("SELECT * FROM review_entities WHERE state = 'active' ORDER BY id").all();
+                    const out = new Array(rows.length);
+                    let next = 0;
+                    const worker = async () => { while (next < rows.length) { const i = next++; out[i] = { entity: rows[i], decision: await decide(rows[i]) }; } };
+                    await Promise.all(Array.from({ length: Math.min(PUBLIC_ENTITIES_PARALLEL, rows.length) }, worker));
+                    publicList.value = out;
+                    publicList.at = now();
+                    return out;
+                })().finally(() => { publicList.building = null; });
+            }
+            return await publicList.building;
         },
 
         /** Entities with at least one live signal or a published summary (the home page). */
