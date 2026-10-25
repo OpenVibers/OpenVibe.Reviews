@@ -7,7 +7,7 @@
 .rv-ew-kinds { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 14px; }
 .rv-ew-kind { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border-light, #2c3d5c); text-decoration: none; color: inherit; font-size: .9rem; }
 .rv-ew-kind.on { border-color: var(--accent, #3b82f6); font-weight: 700; }
-.rv-ew-sites { list-style: none; padding: 0; margin: 0 0 10px; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.rv-ew-sites { list-style: none; padding: 0; margin: 0 0 10px; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); }
 .rv-ew-site { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border, #1f2d47); background: var(--bg-card, #131c2e); }
 .rv-ew-site:hover { border-color: var(--accent, #3b82f6); }
 .rv-ew-open { display: flex; flex-direction: column; gap: 2px; text-decoration: none; color: var(--text-primary, #e6edf7); }
