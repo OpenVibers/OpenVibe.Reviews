@@ -18,8 +18,8 @@ const BUDGETS = {
     jsRawKB: 268,   // 263.4 with shared 4.11.0's seasonal navbar; 239.1 (212.2 before openvibe-shared/shell's web-runtime.js)
     jsBrotliKB: 67,   // 65.3 Shared 4.12.0: the light/dark switch, the seasonal mark and the theme pairs; 61.7 with shared 4.11.0's seasonal navbar; 56.3 (49.9 before web-runtime.js)
     cssFiles: 2,   // 2 (reviews.css, openvibe-shared showcase.css)
-    cssRawKB: 27,   // 25.4 on 2026-10-22 (the front page's numbers, inspections, ranked records, questions and links); 22.1 with members' reviews, kinds and other review sites (2026-10-17); 19.4 (18.2 before 2026-10-15's scoreboard, 6.7 before showcase.css)
-    cssBrotliKB: 6.5,   // 5.6 (2026-10-22 the richer front page); 5.1 with members' reviews (2026-10-17); 4.6 (4.3, 1.7 before showcase.css)
+    cssRawKB: 36,   // 31.3 with Shared 4.13.0 (2026-10-26); 25.4 on 2026-10-22 (the front page's numbers, inspections, ranked records, questions and links); 22.1 with members' reviews, kinds and other review sites (2026-10-17); 19.4 (18.2 before 2026-10-15's scoreboard, 6.7 before showcase.css)
+    cssBrotliKB: 8,   // 6.7 with Shared 4.13.0 (2026-10-26); 5.6 (2026-10-22 the richer front page); 5.1 with members' reviews (2026-10-17); 4.6 (4.3, 1.7 before showcase.css)
     externalFiles: 1,   // 0
 };
 

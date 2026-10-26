@@ -84,7 +84,7 @@ t('the document head and frame come from openvibe-publishing/layout, robots exac
         assert.ok(homeHead.includes('<meta name="robots" content="index, follow">'));
         // The home carries WebSite (with its search) and the FAQPage of the questions it shows, and the site summary's WebPage
         // JSON-LD; an ItemList of the scored pages joins them once there are any (none on an empty site).
-        assert.strictEqual(count(homeHead, /<script type="application\/ld\+json">/g), 3, 'the home page JSON-LD');
+        assert.strictEqual(count(homeHead, /<script type="application\/ld\+json">/g), 4, "the home page JSON-LD (with OpenVibe's Organization, Shared 4.13 headTags)");
         assert.ok(homeHead.includes('"@type":"WebSite"') && homeHead.includes('"@type":"FAQPage"') && homeHead.includes('"@type":"WebPage"'));
         assert.match(homeHead, /<meta name="ai-summary" content="[^"]+">/, 'the AI summary head');
         assert.ok(home.includes('Recently shipped on OpenVibe.Reviews'), 'the shipped line stays on the home page');
