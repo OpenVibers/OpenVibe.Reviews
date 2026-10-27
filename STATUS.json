@@ -7,7 +7,7 @@
   "runtime": "node 22, express, postgresql",
   "port": 4830,
   "domain": "openvibe.reviews",
-  "contracts": "openvibe-contracts v0.217.0",
+  "contracts": "openvibe-contracts v0.218.0",
   "sdk": "openvibe-sdk v0.65.0",
   "shared": "openvibe-shared v4.15.2",
   "packages": [
