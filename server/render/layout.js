@@ -94,7 +94,7 @@ function renderPage(o) {
         feeds,
         iconSite: 'network',
         navbar: navConfig(o, config),
-        footer: { service: 'reviews', variant: 'full', mount: '#ov-footer', brandName: SITE_NAME, updates: '/updates' },
+        footer: { service: 'reviews', variant: 'auto', path: o.path, mount: '#ov-footer', brandName: SITE_NAME, updates: '/updates' },   // full on the front page only (Shared 4.19)
         navLinks: LINKS.map((l) => ({ label: l.label, href: l.href })),
         home: '/',
         css: asset('css/reviews.css'),
