@@ -98,7 +98,8 @@ function reviewsHero(aside = null) {
         eyebrow: 'OpenVibe.Reviews',
         title: 'Employers, landlords, restaurants, hosts.', accent: 'Every review in one place.',
         lede: 'Read and write reviews of where you work, rent, eat and host, beside the scores other sites publish and every review site\'s own page for it. Every number says where it came from.',
-        actions: [{ label: 'Write a review', href: '/review', primary: true }, { label: 'Search every review site', href: '/everywhere' }, { label: 'How it works', href: '/about' }],
+        // Two, so they sit side by side on a phone; how it works is the steps below and /about.
+        actions: [{ label: 'Write a review', href: '/review', primary: true }, { label: 'Search every review site', href: '/everywhere' }],
     });
 }
 function reviewsFeatures() {
@@ -334,7 +335,7 @@ ${complaints.length ? html`<section class="sc-sec" aria-labelledby="rv-cfpb-h"><
 <p class="sc-lede">Complaints consumers sent the Consumer Financial Protection Bureau about financial products. They are not findings: the CFPB does not verify them, and a company with more customers gets more.</p>
 <ol class="rv-h-rank">${complaints.map((x) => html`<li><a href="/e/${e(x.slug)}"><b>${x.name}</b><span>${n(x.complaints)} complaints</span></a></li>`)}</ol>
 <p><a href="/k/organization">Every company (${n(kinds.organization || 0)})</a></p></section>` : ''}
-${raw(reviewsFeatures())}
+<details class="rv-h-fold"><summary>What every page shows<span>sources, checks, changes, corrections, feeds</span></summary>${raw(reviewsFeatures())}</details>
 ${raw(showcase.steps({
         title: 'How it works',
         items: [
@@ -344,15 +345,7 @@ ${raw(showcase.steps({
             { title: 'Every review site is one click away', text: 'Each page links the review sites that cover its kind (Google, Yelp, Glassdoor, the BBB, Trustpilot, Reddit and more), searched for that name.', href: '/everywhere' },
         ],
     }))}
-<section class="sc-sec rv-h-faq" aria-labelledby="rv-faq-h"><h2 id="rv-faq-h">Questions</h2>${HOME_FAQ.map((f) => html`<details><summary>${f.q}</summary><p>${f.a}</p></details>`)}</section>
-<section class="sc-sec" aria-labelledby="rv-links-h"><h2 id="rv-links-h">Find your way around</h2><ul class="rv-h-links">
-<li><a href="/review"><b>Write a review</b><small>Employers, landlords, restaurants, hosts and more.</small></a></li>
-<li><a href="/everywhere"><b>Every review site, one search</b><small>${n(sites)} sites, each searched for the name you type.</small></a></li>
-<li><a href="/about"><b>How it works</b><small>Signals, the aggregate, summaries and corrections.</small></a></li>
-<li><a href="/k/restaurant"><b>Restaurants</b><small>NYC inspections, grades and critical violations.</small></a></li>
-<li><a href="/k/landlord"><b>Landlords</b><small>Buildings by their open HPD violations.</small></a></li>
-<li><a href="/updates"><b>What shipped</b><small>Every change to OpenVibe.Reviews itself.</small></a></li>
-</ul></section>`;
+<section class="sc-sec rv-h-faq" aria-labelledby="rv-faq-h"><h2 id="rv-faq-h">Questions</h2>${HOME_FAQ.map((f) => html`<details><summary>${f.q}</summary><p>${f.a}</p></details>`)}</section>`;
 }
 
 /** The front page's structured data: the site and its search, the scored pages as an ItemList, the questions shown. */
