@@ -19,6 +19,28 @@ const { SITE_SUMMARY } = require('../render/layout');
 const PER_SITEMAP = 45000;
 const ALL_SUMMARIES = 50000;
 
+/**
+ * The public page catalogue: /sitemaps/pages.xml takes the entries marked for the sitemap and
+ * /llms-full.txt describes every entry, so the two artifacts cannot drift apart. Dynamic pages
+ * (entity pages and /k/:kind) are described by their route pattern; the entity pages themselves
+ * are appended from the database below.
+ */
+const PUBLIC_PAGES = [
+    { path: '/', sitemap: true, title: 'OpenVibe.Reviews home', text: 'Review signals from named sources resolved to entities, with provenance for every number; editor-reviewed summaries, members\' reviews, and every other review site in one search.' },
+    { path: '/about', sitemap: true, title: 'How it works', text: 'Where the signals come from, how aggregates are computed, what a summary is and how corrections and editor review work.' },
+    { path: '/updates', title: 'What shipped on OpenVibe.Reviews', text: 'The shared changelog for OpenVibe.Reviews, newest first.' },
+    { path: '/everywhere', title: 'Every review site, one search', text: 'Search an employer, restaurant or other entity across the other review sites OpenVibe.Reviews knows about, without retyping the name.' },
+    { path: '/review', title: 'Write a review', text: 'Name what you want to review and write about it on its page; members\' reviews are separate from source signals.' },
+    { path: '/e/:slug', title: 'One entity page', text: 'Every signal for one entity (an employer, restaurant, game, product or place), its provenance, member reviews, editor-reviewed summaries and where else to read about it; add .json for the same data as JSON.' },
+    { path: '/k/:kind', title: 'Entities of one kind', text: 'Every entity of one kind, the most reviewed by members first.' },
+];
+
+/** The legal pages every OpenVibe site serves, named from the shared kit rather than retyped here. */
+function legalPages() {
+    const labels = { '/terms': 'Terms of use', '/privacy': 'Privacy policy', '/dmca': 'DMCA and takedown policy' };
+    return require('openvibe-shared/legal').PATHS.map((path) => ({ path, title: labels[path] || path.slice(1), text: `The ${(labels[path] || path.slice(1)).toLowerCase()} for OpenVibe.Reviews, served by the site itself.` }));
+}
+
 function createMachine({ svc, config, releaseLastmod }) {
     const router = express.Router();
     const origin = config.baseUrl;
@@ -52,7 +74,7 @@ function createMachine({ svc, config, releaseLastmod }) {
         const updated = (await entityEntries()).filter((e) => e.decision.indexable && e.lastmod).map((e) => e.lastmod);
         const homeLastmod = updated.length ? new Date(Math.max(...updated)).toISOString() : releaseLastmod;
         const policy = { minWords: 0, requireSources: false };
-        const entries = ['/', '/about'].map((p) => ({ loc: seo.canonicalUrl(origin, p), lastmod: p === '/' ? homeLastmod : releaseLastmod, decision: seo.evaluate({ state: 'published', visibility: 'public', canonicalUrl: seo.canonicalUrl(origin, p), wordCount: 0 }, { policy, now: Date.now() }) }));
+        const entries = PUBLIC_PAGES.filter((p) => p.sitemap).map((p) => ({ loc: seo.canonicalUrl(origin, p.path), lastmod: p.path === '/' ? homeLastmod : releaseLastmod, decision: seo.evaluate({ state: 'published', visibility: 'public', canonicalUrl: seo.canonicalUrl(origin, p.path), wordCount: 0 }, { policy, now: Date.now() }) }));
         setCache(res).type('application/xml').send(seo.sitemap(entries).files[0]);
     });
     router.get('/sitemaps/entities-:n.xml', async (req, res) => {
@@ -107,17 +129,18 @@ function createMachine({ svc, config, releaseLastmod }) {
     router.get('/llms-full.txt', async (_req, res) => {
         // The /llms.txt header plus a section of only indexable reviews — the same gate the sitemap
         // applies — each as its short summary. Review text is never stored, so no body can appear.
-        const pages = (await svc.recentSummaries(ALL_SUMMARIES)).filter(({ decision }) => decision.indexable).map(({ entity, rev }) => ({
+        const reviews = (await svc.recentSummaries(ALL_SUMMARIES)).filter(({ decision }) => decision.indexable).map(({ entity, rev }) => ({
             title: entity.name,
             url: svc.entityUrl(entity),
             text: [rev.content || '', ...(rev.fields.pros || []).map((p) => p.text), ...(rev.fields.cons || []).map((p) => p.text)].join('\n').slice(0, 1000),
         }));
+        const pages = [...PUBLIC_PAGES, ...legalPages()].map((p) => ({ url: `${origin}${p.path}`, title: p.title, text: p.text }));
         setCache(res, 3600).type('text/plain').send(sharedSeo.llmsFull({
             site: 'OpenVibe.Reviews',
             summary: SITE_SUMMARY,
             base: origin,
             maxBytes: 512 * 1024,
-            sections: [{ title: 'Reviews', pages }],
+            sections: [{ title: 'Pages', pages }, { title: 'Reviews', pages: reviews }],
         }));
     });
 

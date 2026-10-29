@@ -164,6 +164,10 @@ t('/llms-full.txt carries only indexable reviews and the home page an AI summary
         assert.match(full.headers.get('content-type'), /^text\/plain/);
         assert.strictEqual(full.headers.get('cache-control'), 'public, max-age=3600, stale-while-revalidate=3600');
         assert.ok(full.text.includes('OpenVibe.Reviews'), 'the llms.txt header');
+        assert.ok(full.text.length >= 500, `real content, not a stub (${full.text.length} characters)`);
+        for (const p of ['/', '/about', '/updates', '/everywhere', '/review', '/e/:slug', '/k/:kind', '/terms', '/privacy', '/dmca']) {
+            assert.ok(full.text.includes(`http://reviews.test${p}`), `llms-full.txt names the public route ${p}`);
+        }
         assert.ok(full.text.includes(`http://reviews.test/e/${e.slug}`), 'an indexable review is listed');
         assert.match(full.text, /One recent review recommends it/, 'its short summary is the text');
         assert.ok(!full.text.includes(`/e/${thin.slug}`), 'a thin, non-indexable review is never listed');
