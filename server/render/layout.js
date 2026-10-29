@@ -63,6 +63,12 @@ function navConfig(o, config) {
  * site), robots or decision (the indexability gate's; one is required, there is no default that makes
  * a page indexable), head (extra head HTML), jsonLd [], body, active, actor, config, editor
  */
+// The Markdown twin of this page (openvibe-shared/agent-layer): the head names it, so a reader that
+// already has the HTML finds the twin from it. The twin's address is this page's own address + '.md'.
+const agentHeadTags = (o) => {
+    const canonical = o.canonical || (o.config && o.config.baseUrl ? `${o.config.baseUrl}${String(o.path || '/').split('?')[0]}` : null);
+    return canonical ? require('openvibe-shared/agent-layer').linkHeaderTags(canonical, '/llms.txt').head : '';
+};
 function renderPage(o) {
     const { config } = o;
     if (!o.robots && !o.decision) throw new TypeError('renderPage needs explicit robots (or the gate decision)');
@@ -90,7 +96,6 @@ function renderPage(o) {
         robots: o.robots,
         type: o.ogType || 'website',
         jsonLd: [].concat(o.jsonLd || []),
-        head: o.head,
         feeds,
         iconSite: 'network',
         navbar: navConfig(o, config),
@@ -100,7 +105,10 @@ function renderPage(o) {
         css: asset('css/reviews.css'),
         styles: o.styles,   // openvibe-shared stylesheet names (the home page's showcase.css)
         // This service's own extra stylesheets for one page (/everywhere's css/everywhere.css).
-        head: (o.localStyles || []).map((rel) => `<link rel="stylesheet" href="${asset(rel)}">`).join('\n'),
+        // The extra head HTML: the page's own stylesheets, whatever the page passed, and the link that
+        // names this page's Markdown twin (openvibe-shared/agent-layer).
+        head: [o.head, (o.localStyles || []).map((rel) => `<link rel="stylesheet" href="${asset(rel)}">`).join('\n'),
+            agentHeadTags({ canonical: o.canonical || `${config.baseUrl}${o.path || '/'}` })].filter(Boolean).join('\n'),
         release: RELEASE,
         mainClass: 'rv-main',
         header: `<header class="rv-bar"><a class="rv-brand" href="/">${SITE_NAME}</a><form class="rv-search" action="/search" method="get" role="search"><label for="rv-q" class="rv-sr">Search entities</label><input id="rv-q" name="q" type="search" placeholder="Search entities" value="${esc(o.query || '')}"><button type="submit">Search</button></form><noscript><span class="rv-account">${who}</span></noscript></header>`,

@@ -171,6 +171,21 @@ function createApp({ config, telemetry = null, svc, viewers, platform, sources, 
     app.post(['/e/*', '/editor/*'], limiter(10 * 60000, 120));
     app.post('/e/:slug/correct', limiter(60 * 60000, 20));
     const pages = createPages({ svc, platform, sync, viewers, config, log, limits, home: createHome({ db }) });
+    // The agent layer (openvibe-shared/agent-layer): /.well-known/agent.json and the Markdown twins of the
+    // public pages. Mounted before the page routes but gated to twin requests only, so a browser keeps the
+    // page's own render (signed in or out) and only a twin request reaches the agent layer. The manifest
+    // path is matched exactly, so /.well-known/security.txt and the rest of /.well-known/ are untouched.
+    const agentLayer = require('openvibe-shared/agent-layer');
+    agentLayer.mount({ use: (mw) => app.use((req, res, next) => {
+        const p = req.path || '';
+        const twin = p.endsWith('.md') || req.query.format === 'markdown' || /text\/markdown/.test(String(req.get('accept') || ''));
+        if (p !== '/.well-known/agent.json' && !twin) return next();
+        return mw(req, res, next);
+    }) }, {
+        descriptor: require('./agent-descriptor'),
+        render: require('./agent-pages').createAgentPages({ router: pages.router }).renderPublicPage,
+    });
+
     app.use(pages.router);
 
     app.use((req, res) => pages.errorPage(req, res, 404, 'Not found', 'Nothing lives at that address.'));
