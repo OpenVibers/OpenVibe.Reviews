@@ -19,7 +19,7 @@ const BUDGETS = {
     jsBrotliKB: 76,   // 74.2 openvibe-shared 4.25.0: the menu's orb beside the brand, both balances on phones, messages, the account sheet on phones and the bar stepping away on phones; 70.5 Shared 4.17.0: OpenCoins and Vibes chips (wallet: true) in the navbar; 67.9 openvibe-shared 4.15 footer: the compact footer opens into the whole one, and the pulse line; 65.3 Shared 4.12.0: the light/dark switch, the seasonal mark and the theme pairs; 61.7 with shared 4.11.0's seasonal navbar; 56.3 (49.9 before web-runtime.js)
     cssFiles: 2,   // 2 (reviews.css, openvibe-shared showcase.css)
     cssRawKB: 41,   // 36.8 openvibe-shared 4.26.1 (hero visual); 31.3 with Shared 4.13.0 (2026-10-26); 25.4 on 2026-10-22 (the front page's numbers, inspections, ranked records, questions and links); 22.1 with members' reviews, kinds and other review sites (2026-10-17); 19.4 (18.2 before 2026-10-15's scoreboard, 6.7 before showcase.css)
-    cssBrotliKB: 8.2,   // 6.7 with Shared 4.13.0; raised from 8 for openvibe-shared v4.39.0 (+1.5 KB raw of kit/room/showcase CSS); measured 8.2
+    cssBrotliKB: 8.6,   // 8.4 with the home's fold and phone list rules (2026-10-29); 6.7 with Shared 4.13.0; raised from 8 for openvibe-shared v4.39.0 (+1.5 KB raw of kit/room/showcase CSS); measured 8.2
     externalFiles: 1,   // 0
 };
 
