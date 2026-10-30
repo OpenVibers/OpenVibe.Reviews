@@ -28,6 +28,8 @@ const frame = require('openvibe-shared/frame');
 const seo = require('openvibe-publishing/seo');
 const { renderPage, SITE_SUMMARY } = require('../render/layout');
 const views = require('../render/views');
+// The short home (the owner's rule, 2026-10-30): pick blocks and folds.
+const { pickRules } = require('../render/short');
 const { ratingForStructuredData } = require('../reviews/aggregate');
 const { actorMiddleware, crossSite } = require('./common');
 const everywhere = require('../reviews/everywhere');
@@ -156,9 +158,12 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
             svc.listEntities({ limit: 1 }), svc.entitiesWithData(60), svc.recentMemberReviews(6), svc.kindCounts(),
             home ? home.stats() : null, home ? home.latestInspections(8) : [], home ? home.mostHazardous(6) : [], home ? home.mostComplaints(6) : [],
         ]);
+        // The rule that shows the picked block of the records' pick block: one per block, written for this page.
+        const recordIds = [inspections.length ? 'rv-insp' : null, hazardous.length ? 'rv-hpd' : null, complaints.length ? 'rv-cfpb' : null].filter(Boolean);
         send(req, res, 200, views.home({ entities, total: all.total, editor: isEditor(req), recent, kinds, stats, sites: everywhere.SITES.length, inspections, hazardous, complaints }), {
             robots: 'index, follow', cache: 'public', active: 'home', path: '/', summary: SITE_SUMMARY, styles: [showcase.STYLESHEET], description: HOME_DESCRIPTION,
             jsonLd: views.homeJsonLd({ base: config.baseUrl.replace(/\/+$/, ''), entities }),
+            inlineStyles: [`@supports selector(:has(*)){@media (max-width:640px){${pickRules('records', recordIds)}}}`],
         });
     }));
     // What shipped on OpenVibe.Reviews: the shared update log every OpenVibe site has.

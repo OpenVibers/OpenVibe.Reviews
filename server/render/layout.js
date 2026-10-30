@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const layout = require('openvibe-publishing/layout');
 const frame = require('openvibe-shared/frame');
+const { foldBlock } = require('./short');
 const { escapeHtml: esc } = require('openvibe-publishing/ssr');
 
 const SITE_NAME = 'OpenVibe.Reviews';
@@ -107,13 +108,16 @@ function renderPage(o) {
         // This service's own extra stylesheets for one page (/everywhere's css/everywhere.css).
         // The extra head HTML: the page's own stylesheets, whatever the page passed, and the link that
         // names this page's Markdown twin (openvibe-shared/agent-layer).
+        // The rules that show the picked block of a pick block are written for the page, because there is one per block.
         head: [o.head, (o.localStyles || []).map((rel) => `<link rel="stylesheet" href="${asset(rel)}">`).join('\n'),
+            ...(o.inlineStyles || []).map((css) => `<style>${css}</style>`),
             agentHeadTags({ canonical: o.canonical || `${config.baseUrl}${o.path || '/'}` })].filter(Boolean).join('\n'),
         release: RELEASE,
         mainClass: 'rv-main',
         header: `<header class="rv-bar"><a class="rv-brand" href="/">${SITE_NAME}</a><form class="rv-search" action="/search" method="get" role="search"><label for="rv-q" class="rv-sr">Search entities</label><input id="rv-q" name="q" type="search" placeholder="Search entities" value="${esc(o.query || '')}"><button type="submit">Search</button></form><noscript><span class="rv-account">${who}</span></noscript></header>`,
         body: o.body,
-        shipped: o.path === '/' ? frame.shipped({ service: 'reviews', title: `Recently shipped on ${SITE_NAME}` }) : '',
+        // The shipped list is a part a reader rarely needs: a fold on a phone, the section it was where there is room.
+        shipped: o.path === '/' ? foldBlock({ id: 'shipped', head: `<h2 id="rv-shipped-h">Recently shipped on ${SITE_NAME}</h2>`, html: frame.shipped({ service: 'reviews', title: `Recently shipped on ${SITE_NAME}` }) }) : '',
     });
 }
 

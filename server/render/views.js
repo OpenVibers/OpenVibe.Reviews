@@ -9,6 +9,8 @@
  */
 const ssr = require('openvibe-publishing/ssr');
 const showcase = require('openvibe-shared/showcase');
+// The short home (the owner's rule, 2026-10-30): pick blocks and folds.
+const { pickBlock, foldBlock } = require('./short');
 
 const { html, raw } = ssr;
 const t = (v) => raw(ssr.timeTag(v));
@@ -312,6 +314,23 @@ function homeStats(stats, sites) {
 
 function home({ entities, total, editor, recent = [], kinds = {}, stats = null, sites = 0, inspections = [], hazardous = [], complaints = [] }) {
     const browse = ['employer', 'landlord', 'restaurant', 'hosting', 'business', 'organization', 'product', 'app', 'game', 'vehicle', 'community', 'platform'];
+    // The short home (the owner's rule, 2026-10-30): the three public-record lists are one pick block, a row of chips
+    // picks one of them, and the questions are a fold.
+    const records = [
+        inspections.length ? { id: 'rv-insp', label: 'Inspections', html: html`<section class="sc-sec" aria-labelledby="rv-insp-h"><h2 id="rv-insp-h">Latest restaurant inspections</h2>
+<p class="sc-lede">New York City restaurants by their newest NYC Health inspection, as the inspector recorded it. A letter grade is given only at some inspections.</p>
+<ul class="rv-h-list">${inspections.map((x) => html`<li><a href="/e/${e(x.slug)}"><b>${x.name}</b><span class="rv-muted">${[x.cuisine, BORO(x.boro)].filter(Boolean).join(' · ')}</span>
+<span>Inspected ${t(x.occurred_on)}: ${n(x.violations)} violation${x.violations === 1 ? '' : 's'}${x.critical ? html`, <b class="rv-h-crit">${n(x.critical)} critical</b>` : ''}</span>${x.grade ? html`<span class="rv-muted">Latest grade on record: ${GRADE_TEXT[x.grade] || `Grade ${x.grade}`}</span>` : ''}</a></li>`)}</ul>
+<p><a href="/k/restaurant">Every restaurant (${n(kinds.restaurant || 0)})</a></p></section>` } : null,
+        hazardous.length ? { id: 'rv-hpd', label: 'Hazardous buildings', html: html`<section class="sc-sec" aria-labelledby="rv-hpd-h"><h2 id="rv-hpd-h">Buildings with the most hazardous open violations</h2>
+<p class="sc-lede">Buildings by their open class C (immediately hazardous) violations in NYC HPD's records. Open means HPD has not recorded a violation as corrected, so the count can run ahead of a building's condition today.</p>
+<ol class="rv-h-rank">${hazardous.map((x) => html`<li><a href="/e/${e(x.slug)}"><b>${x.name}</b><span class="rv-muted">${BORO(x.boro)}</span><span>${n(x.c)} class C · ${n(x.open)} open in all</span></a></li>`)}</ol>
+<p><a href="/k/landlord">Every building (${n(kinds.landlord || 0)})</a></p></section>` } : null,
+        complaints.length ? { id: 'rv-cfpb', label: 'CFPB complaints', html: html`<section class="sc-sec" aria-labelledby="rv-cfpb-h"><h2 id="rv-cfpb-h">Companies with the most CFPB complaints</h2>
+<p class="sc-lede">Complaints consumers sent the Consumer Financial Protection Bureau about financial products. They are not findings: the CFPB does not verify them, and a company with more customers gets more.</p>
+<ol class="rv-h-rank">${complaints.map((x) => html`<li><a href="/e/${e(x.slug)}"><b>${x.name}</b><span>${n(x.complaints)} complaints</span></a></li>`)}</ol>
+<p><a href="/k/organization">Every company (${n(kinds.organization || 0)})</a></p></section>` } : null,
+    ].filter(Boolean);
     return html`${raw(reviewsHero(stats ? homeStats(stats, sites) : null))}
 <section class="sc-sec" aria-labelledby="rv-kinds-h"><h2 id="rv-kinds-h">Browse and review</h2>
 <ul class="rv-kinds">${browse.map((k) => html`<li><a href="/k/${k}"><b>${KIND_PLURAL[k]}</b><span class="rv-muted">${kinds[k] ? `${n(kinds[k])} here` : 'Be the first'}</span></a></li>`)}</ul>
@@ -322,19 +341,7 @@ ${recent.length ? html`<section class="sc-sec" aria-labelledby="rv-recent-h"><h2
 ${entities.length ? html`<p class="sc-lede">Each score comes from named sources. Open one to see every signal behind it, when it was read, and how the number was worked out.</p><ul class="rv-board">${entities.map(boardCard)}</ul>`
         : html`<p class="rv-muted">Nothing yet. Entities appear here once a source has stated something about them (or an editor has published a summary).</p>`}
 <p class="rv-muted">${n(total)} pages in all. <a href="/feed.atom">Atom</a> · <a href="/feed.json">JSON Feed</a>${editor ? html` · <a href="/editor">Editor desk</a>` : ''}</p></section>
-${inspections.length ? html`<section class="sc-sec" aria-labelledby="rv-insp-h"><h2 id="rv-insp-h">Latest restaurant inspections</h2>
-<p class="sc-lede">New York City restaurants by their newest NYC Health inspection, as the inspector recorded it. A letter grade is given only at some inspections.</p>
-<ul class="rv-h-list">${inspections.map((x) => html`<li><a href="/e/${e(x.slug)}"><b>${x.name}</b><span class="rv-muted">${[x.cuisine, BORO(x.boro)].filter(Boolean).join(' · ')}</span>
-<span>Inspected ${t(x.occurred_on)}: ${n(x.violations)} violation${x.violations === 1 ? '' : 's'}${x.critical ? html`, <b class="rv-h-crit">${n(x.critical)} critical</b>` : ''}</span>${x.grade ? html`<span class="rv-muted">Latest grade on record: ${GRADE_TEXT[x.grade] || `Grade ${x.grade}`}</span>` : ''}</a></li>`)}</ul>
-<p><a href="/k/restaurant">Every restaurant (${n(kinds.restaurant || 0)})</a></p></section>` : ''}
-${hazardous.length ? html`<section class="sc-sec" aria-labelledby="rv-hpd-h"><h2 id="rv-hpd-h">Buildings with the most hazardous open violations</h2>
-<p class="sc-lede">Buildings by their open class C (immediately hazardous) violations in NYC HPD's records. Open means HPD has not recorded a violation as corrected, so the count can run ahead of a building's condition today.</p>
-<ol class="rv-h-rank">${hazardous.map((x) => html`<li><a href="/e/${e(x.slug)}"><b>${x.name}</b><span class="rv-muted">${BORO(x.boro)}</span><span>${n(x.c)} class C · ${n(x.open)} open in all</span></a></li>`)}</ol>
-<p><a href="/k/landlord">Every building (${n(kinds.landlord || 0)})</a></p></section>` : ''}
-${complaints.length ? html`<section class="sc-sec" aria-labelledby="rv-cfpb-h"><h2 id="rv-cfpb-h">Companies with the most CFPB complaints</h2>
-<p class="sc-lede">Complaints consumers sent the Consumer Financial Protection Bureau about financial products. They are not findings: the CFPB does not verify them, and a company with more customers gets more.</p>
-<ol class="rv-h-rank">${complaints.map((x) => html`<li><a href="/e/${e(x.slug)}"><b>${x.name}</b><span>${n(x.complaints)} complaints</span></a></li>`)}</ol>
-<p><a href="/k/organization">Every company (${n(kinds.organization || 0)})</a></p></section>` : ''}
+${raw(pickBlock({ key: 'records', label: 'Public records', head: 'Public records', panes: records }))}
 <details class="rv-h-fold"><summary>How it works<span>what every page shows, and where the numbers come from</span></summary>${raw(reviewsFeatures())}${raw(showcase.steps({
         title: 'How it works',
         items: [
@@ -344,7 +351,7 @@ ${complaints.length ? html`<section class="sc-sec" aria-labelledby="rv-cfpb-h"><
             { title: 'Every review site is one click away', text: 'Each page links the review sites that cover its kind (Google, Yelp, Glassdoor, the BBB, Trustpilot, Reddit and more), searched for that name.', href: '/everywhere' },
         ],
     }))}</details>
-<section class="sc-sec rv-h-faq" aria-labelledby="rv-faq-h"><h2 id="rv-faq-h">Questions</h2>${HOME_FAQ.map((f) => html`<details><summary>${f.q}</summary><p>${f.a}</p></details>`)}</section>`;
+${raw(foldBlock({ id: 'faq', head: '<h2 id="rv-faq-h">Questions</h2>', html: html`<section class="sc-sec rv-h-faq" aria-labelledby="rv-faq-h"><h2 id="rv-faq-h-in">Questions</h2>${HOME_FAQ.map((f) => html`<details><summary>${f.q}</summary><p>${f.a}</p></details>`)}</section>` }))}`;
 }
 
 /** The front page's structured data: the site and its search, the scored pages as an ItemList, the questions shown. */
