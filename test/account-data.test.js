@@ -7,6 +7,8 @@
  */
 const assert = require('assert');
 const { signDeliveryHeaders } = require('openvibe-sdk/events');
+const { uncovered } = require('openvibe-sdk/account-data');
+const { TABLES } = require('../server/reviews/account-data');
 const { boot, req, suite, userToken, cookieFor, subject, outbox, WEBHOOK_SECRET } = require('./helpers');
 
 const t = suite('account-data');
@@ -16,6 +18,16 @@ t('export, then deletion: reviews gone and re-indexed, additions and corrections
     const calls = [];
     const send = async (path, body) => { calls.push({ path, body }); return { ok: true, status: 201 }; };
     const h = await boot({ send });
+        const missing = await uncovered(h.db, {
+            tables: TABLES,
+            taskKeyed: ['review_entities', 'review_entity_aliases', 'review_entity_links', 'review_summary_drafts'],
+            exempt: {
+                account_data_events: 'the ledger of requests itself: which export and deletion Reviews applied',
+                review_signals: 'signals are imported from OpenVibe.Sources and attributed to the source, not to a person',
+                review_index_revisions: "owner is the search-index document's owner (type/id), not a person; the row holds a revision and hash",
+            },
+        });
+        assert.deepStrictEqual(missing, [], `a table with a person column is neither covered nor exempted: ${missing.join(', ')}`);
     try {
         const ana = subject();
         const ben = subject();
