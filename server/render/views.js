@@ -335,8 +335,7 @@ ${complaints.length ? html`<section class="sc-sec" aria-labelledby="rv-cfpb-h"><
 <p class="sc-lede">Complaints consumers sent the Consumer Financial Protection Bureau about financial products. They are not findings: the CFPB does not verify them, and a company with more customers gets more.</p>
 <ol class="rv-h-rank">${complaints.map((x) => html`<li><a href="/e/${e(x.slug)}"><b>${x.name}</b><span>${n(x.complaints)} complaints</span></a></li>`)}</ol>
 <p><a href="/k/organization">Every company (${n(kinds.organization || 0)})</a></p></section>` : ''}
-<details class="rv-h-fold"><summary>What every page shows<span>sources, checks, changes, corrections, feeds</span></summary>${raw(reviewsFeatures())}</details>
-${raw(showcase.steps({
+<details class="rv-h-fold"><summary>How it works<span>what every page shows, and where the numbers come from</span></summary>${raw(reviewsFeatures())}${raw(showcase.steps({
         title: 'How it works',
         items: [
             { title: 'Sources are read within their terms', text: 'OpenVibe.Sources collects public ratings and official records, each with its source, item and the time it was read.' },
@@ -344,7 +343,7 @@ ${raw(showcase.steps({
             { title: 'Members add their own reviews', text: 'Signed-in members write reviews and save the ratings other sites show, kept apart from the sources\' numbers.', href: '/review' },
             { title: 'Every review site is one click away', text: 'Each page links the review sites that cover its kind (Google, Yelp, Glassdoor, the BBB, Trustpilot, Reddit and more), searched for that name.', href: '/everywhere' },
         ],
-    }))}
+    }))}</details>
 <section class="sc-sec rv-h-faq" aria-labelledby="rv-faq-h"><h2 id="rv-faq-h">Questions</h2>${HOME_FAQ.map((f) => html`<details><summary>${f.q}</summary><p>${f.a}</p></details>`)}</section>`;
 }
 
