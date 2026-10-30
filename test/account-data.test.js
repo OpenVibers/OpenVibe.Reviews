@@ -8,7 +8,7 @@
 const assert = require('assert');
 const { signDeliveryHeaders } = require('openvibe-sdk/events');
 const { uncovered } = require('openvibe-sdk/account-data');
-const { TABLES } = require('../server/reviews/account-data');
+const { TABLES, GUARDED } = require('../server/reviews/account-data');
 const { boot, req, suite, userToken, cookieFor, subject, outbox, WEBHOOK_SECRET } = require('./helpers');
 
 const t = suite('account-data');
@@ -19,8 +19,7 @@ t('export, then deletion: reviews gone and re-indexed, additions and corrections
     const send = async (path, body) => { calls.push({ path, body }); return { ok: true, status: 201 }; };
     const h = await boot({ send });
         const missing = await uncovered(h.db, {
-            tables: TABLES,
-            taskKeyed: ['review_entities', 'review_entity_aliases', 'review_entity_links', 'review_summary_drafts'],
+            tables: [...TABLES, ...GUARDED],
             exempt: {
                 account_data_events: 'the ledger of requests itself: which export and deletion Reviews applied',
                 review_signals: 'signals are imported from OpenVibe.Sources and attributed to the source, not to a person',
@@ -37,6 +36,22 @@ t('export, then deletion: reviews gone and re-indexed, additions and corrections
         await req(h, 'POST', '/e/acme-corp/reviews', { cookie: anaC, form: { rating: '4', title: 'Solid place to work', body: BODY } });
         await req(h, 'POST', '/e/acme-corp/reviews', { cookie: benC, form: { rating: '2', title: 'Burned out', body: 'Constant overtime, and the on-call rota was anything but fair to the night team.' } });
         await req(h, 'POST', '/save', { cookie: anaC, form: { entity: 'acme-corp', url: 'https://www.glassdoor.com/Reviews/Acme-E1.htm', value: '3.9', best: '5', count: '120' } });
+        // A second entity for Ben, so a link has two ends; a link Ana added, a link Ben added that Ana ended, an
+        // alias Ben added that Ana removed, and a summary draft each.
+        await req(h, 'POST', '/review', { cookie: benC, form: { kind: 'employer', name: 'Beta Ltd' } });
+        const acme = (await h.db.prepare('SELECT id FROM review_entities WHERE slug = ?').get('acme-corp')).id;
+        const beta = (await h.db.prepare('SELECT id FROM review_entities WHERE slug = ?').get('beta-ltd')).id;
+        const at = Date.now();
+        await h.db.prepare(`INSERT INTO review_entity_links (id, from_entity, to_entity, type, note, created_by, created_at)
+            VALUES ('rvl_01JZ0000000000000000000A1', ?, ?, 'related', 'opened by Ana', ?, ?)`).run(acme, beta, ana, at);
+        await h.db.prepare(`INSERT INTO review_entity_links (id, from_entity, to_entity, type, note, created_by, created_at, ended_at, ended_by)
+            VALUES ('rvl_01JZ0000000000000000000B1', ?, ?, 'related', 'ended by Ana', ?, ?, ?, ?)`).run(beta, acme, ben, at, at, ana);
+        await h.db.prepare(`INSERT INTO review_entity_aliases (id, entity_id, type, value, norm, created_by, created_at, removed_at, removed_by)
+            VALUES ('rva_01JZ0000000000000000000B1', ?, 'url', 'https://beta.example', 'beta.example', ?, ?, ?, ?)`).run(beta, ben, at, at, ana);
+        for (const [owner, content] of [[ana, 'Ana draft'], [ben, 'Ben draft']]) {
+            await h.db.prepare(`INSERT INTO review_summary_drafts (entity_id, owner, base_revision, content, created_at, updated_at)
+                VALUES (?, ?, 1, ?, ?, ?)`).run(acme, owner, content, at, at);
+        }
         const deliver = async (event, { secret = WEBHOOK_SECRET, headers = {} } = {}) => {
             const body = JSON.stringify({ event, seq: 1 });
             const r = await fetch(`${h.base}/internal/account-events`, { method: 'POST', body, headers: { 'Content-Type': 'application/json', ...signDeliveryHeaders(body, secret), ...headers } });
@@ -51,6 +66,8 @@ t('export, then deletion: reviews gone and re-indexed, additions and corrections
         const files = JSON.stringify(part.body);
         assert.ok(files.includes('reviews.json') && files.includes('Solid place to work') && files.includes('added-to-review.json'), files.slice(0, 300));
         assert.ok(files.includes('ratings-from-other-sites.json') && files.includes('Acme-E1.htm'), 'the rating she saved');
+        assert.ok(files.includes('aliases.json') && files.includes('links.json') && files.includes('summary-drafts.json'), 'her aliases, links and drafts');
+        assert.ok(files.includes('opened by Ana') && files.includes('Ana draft') && !files.includes('Ben draft'), 'her link and draft, not his');
         assert.ok(!files.includes('Burned out') && !files.includes(ben), 'nothing of Ben\'s');
 
         // Deletion: her review gone, the page re-sent to Search without it; Acme stays, made authorless.
@@ -69,6 +86,19 @@ t('export, then deletion: reviews gone and re-indexed, additions and corrections
         assert.strictEqual(conf.length, 1);
         assert.strictEqual(conf[0].body.erased.review_member_reviews, 1);
         assert.strictEqual(conf[0].body.erased.review_seen_ratings, 1);
+        assert.strictEqual(conf[0].body.erased.review_summary_drafts, 1, 'her draft is gone');
+        // Acme, her alias, Ben's alias she removed, her link and Ben's link she ended: five tombstones.
+        assert.strictEqual(conf[0].body.retained.tombstones, 5, 'the rows that stay lose her, nothing else');
+        const herName = await h.db.prepare("SELECT created_by FROM review_entity_aliases WHERE entity_id = ? AND type = 'name'").get(acme);
+        assert.strictEqual(herName.created_by, 'deleted', 'the alias she added loses her');
+        const hisAlias = await h.db.prepare("SELECT created_by, removed_by FROM review_entity_aliases WHERE id = 'rva_01JZ0000000000000000000B1'").get();
+        assert.deepStrictEqual([hisAlias.created_by, hisAlias.removed_by], [ben, 'deleted'], 'his alias keeps its author and loses her as remover');
+        const herLink = await h.db.prepare("SELECT created_by FROM review_entity_links WHERE id = 'rvl_01JZ0000000000000000000A1'").get();
+        assert.strictEqual(herLink.created_by, 'deleted', 'the link she added loses her');
+        const hisLink = await h.db.prepare("SELECT created_by, ended_by FROM review_entity_links WHERE id = 'rvl_01JZ0000000000000000000B1'").get();
+        assert.deepStrictEqual([hisLink.created_by, hisLink.ended_by], [ben, 'deleted'], 'his link keeps its author and loses her as ender');
+        assert.strictEqual(Number((await h.db.prepare('SELECT COUNT(*) AS n FROM review_summary_drafts WHERE owner = ?').get(ana)).n), 0, 'her draft is gone');
+        assert.strictEqual(Number((await h.db.prepare('SELECT COUNT(*) AS n FROM review_summary_drafts WHERE owner = ?').get(ben)).n), 1, 'his draft stays');
         assert.ok(!/rv-seen/.test(page.text), 'the rating she saved is gone from the page');
         // A redelivery erases nothing twice.
         assert.strictEqual((await deliver(del)).json.outcome, 'unchanged');
