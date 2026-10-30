@@ -179,6 +179,8 @@ main .rv-h-panel-h { margin: 0 0 12px; padding: 0; border: 0; font-size: 1rem; }
 .rv-h-fold > summary span { color: var(--text-muted, #7386a3); font-weight: 600; font-size: .86rem; }
 .rv-h-fold .sc-sec { margin: 0; padding: 0 16px 14px; }
 @media (max-width: 599px) {
-  .rv-board > li:nth-child(n+7) { display: none; }
-  .rv-h-list > li:nth-child(n+5), .rv-h-rank > li:nth-child(n+5) { display: none; }
+  /* Second pass: the scores board and the ranked lists are one sideways row each, every card in them. */
+  .rv-board, .rv-h-list, .rv-h-rank { display: flex; flex-wrap: nowrap; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: 16px; scrollbar-width: none; gap: 10px; margin-left: -16px; margin-right: -16px; padding: 0 16px 4px; }
+  .rv-board::-webkit-scrollbar, .rv-h-list::-webkit-scrollbar, .rv-h-rank::-webkit-scrollbar { display: none; }
+  .rv-board > li, .rv-h-list > li, .rv-h-rank > li { flex: 0 0 80%; min-width: 0; scroll-snap-align: start; }
 }
