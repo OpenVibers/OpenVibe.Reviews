@@ -184,3 +184,13 @@ main .rv-h-panel-h { margin: 0 0 12px; padding: 0; border: 0; font-size: 1rem; }
   .rv-board::-webkit-scrollbar, .rv-h-list::-webkit-scrollbar, .rv-h-rank::-webkit-scrollbar { display: none; }
   .rv-board > li, .rv-h-list > li, .rv-h-rank > li { flex: 0 0 80%; min-width: 0; scroll-snap-align: start; }
 }
+
+/* Fingers, not pointers (2026-10-29): the site bar's brand and search, each question and a paragraph that is nothing
+   but a link are 44 px tall to a finger; the two links that are text grow only vertically. */
+@media (pointer: coarse) {
+  .rv-h-faq summary { min-height: 44px; }
+  .rv-search button { min-height: 44px; }
+  .rv-brand, .rv-main p > a:only-child { position: relative; }
+  .rv-brand::after { content: ''; position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; }
+  .rv-main p > a:only-child::after { content: ''; position: absolute; left: 0; right: 0; top: -13px; bottom: -13px; }
+}
