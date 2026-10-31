@@ -9,8 +9,11 @@
  */
 const ssr = require('openvibe-publishing/ssr');
 const showcase = require('openvibe-shared/showcase');
+const kit = require('openvibe-shared/kit');
 // The short home (the owner's rule, 2026-10-30): pick blocks and folds.
 const { pickBlock, foldBlock } = require('./short');
+// Per-source counts on an entity page use the same method as the page's aggregate.
+const { computeAggregate } = require('../reviews/aggregate');
 
 const { html, raw } = ssr;
 const t = (v) => raw(ssr.timeTag(v));
@@ -64,16 +67,57 @@ function signalValue(s) {
     }
 }
 
-function trustFacts(trust) {
+function trustBits(trust = {}) {
     const bits = [];
-    if (trust.steam_purchase === true) bits.push('bought on Steam');
-    if (trust.steam_purchase === false) bits.push('not bought on Steam');
-    if (trust.received_for_free === true) bits.push('received for free');
-    if (trust.written_during_early_access === true) bits.push('written during early access');
-    if (trust.verified_purchase === true) bits.push('verified purchase');
-    if (trust.playtime_at_review_min != null) bits.push(`${n(Math.round(trust.playtime_at_review_min / 60))} h played at review`);
-    if (trust.language) bits.push(`language: ${trust.language}`);
-    return bits.join(' · ');
+    if (trust.steam_purchase === true) bits.push({ key: 'purchase', text: 'bought on Steam' });
+    if (trust.steam_purchase === false) bits.push({ key: 'not-purchase', text: 'not bought on Steam' });
+    if (trust.received_for_free === true) bits.push({ key: 'free', text: 'received for free' });
+    if (trust.written_during_early_access === true) bits.push({ key: 'early', text: 'written during early access' });
+    if (trust.verified_purchase === true) bits.push({ key: 'verified', text: 'verified purchase' });
+    if (trust.playtime_at_review_min != null) bits.push({ key: 'playtime', text: `${n(Math.round(trust.playtime_at_review_min / 60))} h played at review` });
+    if (trust.language) bits.push({ key: 'language', text: `language: ${trust.language}` });
+    return bits;
+}
+function trustFacts(trust) { return trustBits(trust).map((b) => b.text).join(' · '); }
+
+/** The one-word name a source is known by here ("Steam", "NYC Health"), for a line beside a review. */
+function sourceShortName(name, key) {
+    if (name) {
+        const s = String(name);
+        const steam = s.match(/^(.+?)\s+user review signals:/i);
+        if (steam) return steam[1];
+        const colon = s.indexOf(':');
+        if (colon > 0) return s.slice(0, colon).trim();
+        return s.length > 42 ? `${s.slice(0, 39)}…` : s;
+    }
+    // A source with no recorded name still gets a human label, never its raw key on a page.
+    const k = String(key || '');
+    if (/^steam-reviews-/.test(k)) return 'Steam';
+    if (k === 'cfpb-complaints-by-company') return 'CFPB';
+    if (k === 'nyc-hpd-open-violations') return 'NYC HPD';
+    if (k === 'nyc-restaurant-inspections') return 'NYC Health';
+    return k.replace(/-/g, ' ');
+}
+
+/** A purchase on the source's own record, never a check of ours. A free copy is not a purchase. */
+function purchased(s) {
+    const t = (s && s.trust) || {};
+    return (t.verified_purchase === true || t.steam_purchase === true) && t.received_for_free !== true;
+}
+function receivedFree(s) { return !!((s && s.trust) || {}).received_for_free; }
+
+/** The transaction as the source recorded it: evidence beside the review, not a verdict on it. */
+function evidenceBadge(s, source) {
+    if (receivedFree(s)) return kit.badge('Received for free', 'warn');
+    if (purchased(s)) return kit.badge(`Verified purchase · ${sourceShortName(source && source.name, s && s.source_key)}`, 'ok');
+    return '';
+}
+
+/** The facts beside a review that are not already the evidence badge. */
+function reviewFacts(s) {
+    return trustBits(s.trust)
+        .filter((b) => !(b.key === 'purchase' || b.key === 'free' || b.key === 'verified'))
+        .map((b) => b.text);
 }
 
 function errorBody({ status, title, message }) {
@@ -159,7 +203,7 @@ function paragraphs(text) {
 
 function memberReviewItem(r, { entity, editor }) {
     return html`<li><article class="rv-mr" id="${r.id}"><header>${stars(r.rating)} <b>${r.title}</b></header>
-<p class="rv-muted">${r.author_name}${r.relation ? html` · ${r.relation}` : ''} · ${t(r.created_at)}${r.edited ? ' (edited)' : ''}</p>
+<p class="rv-muted">Written here by ${r.author_name}${r.relation ? html` · ${r.relation}` : ''} · ${t(r.created_at)}${r.edited ? ' (edited)' : ''}</p>
 <div class="rv-mr-body">${paragraphs(r.body)}</div>
 ${r.mine ? html`<form method="post" action="${epath(entity)}/reviews/${r.id}/remove" class="rv-inline"><button type="submit" class="rv-link-button">Delete my review</button></form>`
         : editor ? html`<form method="post" action="${epath(entity)}/reviews/${r.id}/remove" class="rv-inline"><input type="text" name="reason" placeholder="Reason (kept in the log)" aria-label="Reason for removing" maxlength="300"> <button type="submit" class="rv-link-button">Remove</button></form>` : ''}
@@ -336,7 +380,7 @@ function home({ entities, total, editor, recent = [], kinds = {}, stats = null, 
 <ul class="rv-kinds">${browse.map((k) => html`<li><a href="/k/${k}"><b>${KIND_PLURAL[k]}</b><span class="rv-muted">${kinds[k] ? `${n(kinds[k])} here` : 'Be the first'}</span></a></li>`)}</ul>
 <p><a class="rv-button" href="/review">Write a review</a> <a href="/everywhere">Search every review site</a></p></section>
 ${recent.length ? html`<section class="sc-sec" aria-labelledby="rv-recent-h"><h2 id="rv-recent-h">Latest reviews from members</h2>
-<ul class="rv-recent">${recent.map((r) => html`<li><a href="/e/${r.entity.slug}#${r.id}"><span class="rv-card-head"><b>${r.entity.name}</b> <span class="rv-tag">${KIND_LABEL[r.entity.kind]}</span></span>${stars(r.rating)} <b>${r.title}</b><br><span class="rv-muted">${r.body.length > 160 ? `${r.body.slice(0, 157)}…` : r.body}</span></a></li>`)}</ul></section>` : ''}
+<ul class="rv-recent">${recent.map((r) => html`<li><a href="/e/${r.entity.slug}#${r.id}"><span class="rv-card-head"><b>${r.entity.name}</b> <span class="rv-tag">${KIND_LABEL[r.entity.kind]}</span></span>${stars(r.rating)} <b>${r.title}</b><br><span class="rv-muted">${r.body.length > 160 ? `${r.body.slice(0, 157)}…` : r.body}</span><br><span class="rv-muted">Written here by ${r.author_name} · ${t(r.created_at)}</span></a></li>`)}</ul></section>` : ''}
 <section id="entities" class="sc-sec" aria-labelledby="rv-board-h"><h2 id="rv-board-h">Scores from sources</h2>
 ${entities.length ? html`<p class="sc-lede">Each score comes from named sources. Open one to see every signal behind it, when it was read, and how the number was worked out.</p><ul class="rv-board">${entities.map(boardCard)}</ul>`
         : html`<p class="rv-muted">Nothing yet. Entities appear here once a source has stated something about them (or an editor has published a summary).</p>`}
@@ -393,6 +437,18 @@ function aboutPage() {
 <li>With no qualifying signal there is no aggregate. Not zero, not a placeholder: none.</li>
 </ul>
 <p>Each change to the inputs produces a new aggregate revision; the entity history lists them all.</p>
+<h2 id="retention">Retention and removal</h2>
+<p>No deletion window is set for a signal. When a source updates an item the old signal is marked replaced; when it removes one the signal is withdrawn. Both stay in the entity's history and keep their provenance. An editor can exclude a source or a signal, always with a reason shown on the page. A member can delete their own review, and an editor can remove one with a reason; the reason stays in the editorial log.</p>
+<h2 id="checks">What we check</h2>
+<ul>
+<li>The source, the item, its revision and when it was read are on every signal.</li>
+<li>A rating counts only when its source stated the scale and the count; otherwise it is left out, and the page says why.</li>
+<li>A source's own tally is counted once; the individual reviews it covers are not added on top.</li>
+<li>An editor can exclude a source or a signal only with a reason, shown on the page.</li>
+<li>The source's own purchase record is shown beside a review as evidence. It says the reviewer bought it; it does not say the review is true.</li>
+</ul>
+<p>We do not score how likely a review is to be fake. We do not read review text, IP addresses, devices or writing style, and we have no measured fake-review detection rate: none is published.</p>
+<p>There is no invitation or import feed: a review's provenance says it came from a source item, was written here, or is a rating seen on another site by a member.</p>
 <h2 id="summaries">Summaries</h2>
 <p>A summary is text written by an editor (or drafted by OpenVibe.AI and approved by an editor) whose pros and cons each cite the signals they rest on. A summary never carries a rating. If a cited signal is withdrawn or replaced, the summary is flagged on the page and a revised version waits for an editor.</p>
 <h2 id="entities">Entities, merges and splits</h2>
@@ -416,10 +472,21 @@ function aggregateSection(p) {
     const r = p.aggregate.result;
     const c = r.components;
     const byId = new Map([...p.signals, ...p.inactive_signals].map((s) => [s.signal_id, s]));
+    // The sample and, where the source recorded one, the purchase evidence inside it. Never a count we did not keep.
+    const inComponent = (x) => x.inputs.map((id) => byId.get(id)).filter(Boolean);
+    const bought = (x) => inComponent(x).filter(purchased).length;
+    const allSteam = (x) => inComponent(x).length > 0 && inComponent(x).every((s) => /^steam-/.test(s.source_key));
+    const purchasePhrase = (x) => {
+        const k = bought(x);
+        if (!k) return '';
+        return allSteam(x) ? `${n(k)} of them bought on Steam` : `${n(k)} of them with a purchase on record`;
+    };
+    const ratePurchase = c.rating ? purchasePhrase(c.rating) : '';
+    const recPurchase = c.recommendation ? purchasePhrase(c.recommendation) : '';
     return html`<section class="rv-aggregate">${head}
 <div class="rv-agg-box">
-${c.rating ? html`<p class="rv-agg"><strong>${c.rating.on_scale ? `${c.rating.on_scale.value} / ${c.rating.on_scale.best}` : `${c.rating.percent}%`}</strong> from ${n(c.rating.count)} rating${c.rating.count === 1 ? '' : 's'}${c.rating.on_scale ? html` <span class="rv-muted">(${c.rating.percent}% of the best possible rating)</span>` : ''}</p>` : ''}
-${c.recommendation ? html`<p class="rv-agg"><strong>${c.recommendation.percent}%</strong> recommend: ${n(c.recommendation.positive)} of ${n(c.recommendation.total)}</p>` : ''}
+${c.rating ? html`<p class="rv-agg"><strong>${c.rating.on_scale ? `${c.rating.on_scale.value} / ${c.rating.on_scale.best}` : `${c.rating.percent}%`}</strong> from ${n(c.rating.count)} rating${c.rating.count === 1 ? '' : 's'}${ratePurchase ? html`, ${ratePurchase}` : ''}${c.rating.on_scale ? html` <span class="rv-muted">(${c.rating.percent}% of the best possible rating)</span>` : ''}</p>` : ''}
+${c.recommendation ? html`<p class="rv-agg"><strong>${c.recommendation.percent}%</strong> recommend, from ${n(c.recommendation.total)} review${c.recommendation.total === 1 ? '' : 's'}${recPurchase ? html`, ${recPurchase}` : ''}</p>` : ''}
 <p class="rv-muted">Aggregate revision ${String(p.aggregate.revision)}, computed ${tl(p.aggregate.computed_at)} from ${String(r.inputs.length)} signal${r.inputs.length === 1 ? '' : 's'} of ${String(r.sources.length)} source${r.sources.length === 1 ? '' : 's'}, observed ${t(r.observed.earliest)} to ${t(r.observed.latest)}. <a href="/about#method">Method ${r.method}</a>.</p>
 </div>
 <details><summary>Computation</summary><ul>${r.computation.map((line) => html`<li><code>${line}</code></li>`)}</ul>
@@ -506,17 +573,108 @@ ${comments.length ? html`<ul class="rv-comments">${comments.map((c) => html`<li>
 ${form}</section>`;
 }
 
+/**
+ * The method box every entity page publishes (the market research's first outcome): where the reviews come from,
+ * how they are collected and kept, how one is removed, the checks we really run, and the detection rate we do not
+ * have. The source names and count are the page's own; the rest is how server/reviews/aggregate.js and the signal
+ * tables work, so the page never claims a number or a policy we do not hold.
+ */
+function methodBox(p) {
+    const sources = p.sources.length
+        ? `${n(p.sources.length)} source${p.sources.length === 1 ? '' : 's'} on this page: ${p.sources.map((s) => sourceShortName(s.name, s.key)).join(', ')}.`
+        : 'No source has stated anything about this entity yet.';
+    const rows = [
+        kit.row({ title: 'Where reviews come from', sub: `${sources} Members' reviews are written here and kept apart. Every review says where it came from: a source item, written here, or a rating seen on another site by a member. We have no invitation or import feed, so no review claims one.` }),
+        kit.row({ title: 'How we collect them', sub: 'OpenVibe.Sources retrieves each source item. We keep the source, the item, its revision and when it was read; the review text stays with the source.' }),
+        kit.row({ title: 'How long we keep them', sub: 'No deletion window is set. A replaced or withdrawn signal stays in this page\'s history.' }),
+        kit.row({ title: 'How we remove one', sub: 'A source that removes an item withdraws its signal; a changed item replaces the old one. An editor can exclude a signal or a source, and the reason is shown beside it.' }),
+        kit.row({ title: 'What we check', sub: 'The source, item and read time on every signal; a rating\'s stated scale and count; one tally per source; an editor\'s exclusion and its reason; the source\'s own purchase record.' }),
+        kit.row({ title: 'What we do not measure', sub: 'No fake-review detection rate: none is measured, so none is published. We do not read review text, IP addresses, devices or writing style.' }),
+    ];
+    return raw(kit.fold({
+        id: 'method', title: 'How this page\'s numbers are made', meta: 'method, retention, checks',
+        body: `<div class="rv-method">${kit.list(rows, { flush: true })}</div><p class="rv-muted"><a href="/about#checks">The full method, retention and checks</a></p>`,
+    }));
+}
+
+/** One source's own reviews, counted with the same method as the page's aggregate. */
+function sourceCard(src, signals) {
+    // The signal view says `recommended: true | false`; computeAggregate reads the stored 1 | 0.
+    const rows = signals.map((s) => ({ ...s, id: s.signal_id, recommended: s.recommended === true ? 1 : s.recommended === false ? 0 : s.recommended }));
+    const result = computeAggregate(rows);
+    const c = result && result.components;
+    const figures = [];
+    if (c && c.rating) figures.push(html`<p class="rv-source-figure"><span class="rv-big">${c.rating.on_scale ? `${c.rating.on_scale.value} / ${c.rating.on_scale.best}` : `${c.rating.percent}%`}</span> <span class="rv-muted">from ${n(c.rating.count)} rating${c.rating.count === 1 ? '' : 's'}</span></p>`);
+    if (c && c.recommendation) figures.push(html`<p class="rv-source-figure"><span class="rv-big">${c.recommendation.percent}%</span> <span class="rv-muted">recommend from ${n(c.recommendation.total)} review${c.recommendation.total === 1 ? '' : 's'}</span></p>`);
+    const readAt = signals.map((s) => s.provenance && s.provenance.retrieved_at).filter(Boolean).sort().pop();
+    const limits = [];
+    if (src.stale) limits.push('the source was stale when last checked');
+    if (src.license_note) limits.push(`licence: ${src.license_note}`);
+    if (src.trust && src.trust.limitation) limits.push(src.trust.limitation.value);
+    if (src.trust && src.trust.verification) limits.push(`verification: ${src.trust.verification.value}`);
+    const site = safeUrl(src.homepage_url);
+    return html`<li class="rv-source-card">
+<p class="rv-source-head"><b>${src.name || sourceShortName(null, src.key)}</b></p>
+${figures.length ? figures : html`<p class="rv-muted">No qualifying signal: the source did not state a scale and a count. ${n(signals.length)} signal${signals.length === 1 ? '' : 's'}.</p>`}
+<p class="rv-muted">Read${readAt ? html` ${tl(readAt)}` : ''}${site ? html` · <a href="${site}" rel="nofollow noopener">source site</a>` : ''}</p>
+${src.trust && src.trust.aggregate ? html`<p>${raw(kit.badge('Excluded from the aggregate', 'warn'))} <span class="rv-muted">${src.trust.aggregate.note || 'an editor excluded this source'}</span></p>` : ''}
+${limits.length ? html`<p class="rv-muted">${limits.join(' · ')}</p>` : ''}
+${src.terms_note ? html`<details class="rv-source-terms"><summary>Terms</summary><p class="rv-muted">${src.terms_note}</p></details>` : ''}
+</li>`;
+}
+
+/** Every source's own count side by side, so disagreement stays visible instead of being averaged away. */
+function sourcesSection(p) {
+    if (!p.sources.length) return '';
+    const byKey = new Map();
+    for (const s of p.signals) {
+        if (!byKey.has(s.source_key)) byKey.set(s.source_key, []);
+        byKey.get(s.source_key).push(s);
+    }
+    return html`<section id="sources" aria-labelledby="sources-h"><h2 id="sources-h">Sources side by side</h2>
+<p class="rv-muted">Each source's own reviews and its own count. A source with more reviews does not outweigh another.</p>
+<ul class="rv-source-cards">${p.sources.map((src) => sourceCard(src, byKey.get(src.key) || []))}</ul>
+${p.entity_trust.limitation ? html`<p class="rv-limits">${p.entity_trust.limitation.value}</p>` : ''}
+<p class="rv-muted">Coverage is what the sources above returned, nothing more: a source that samples recent reviews, one language or one shop describes that sample, not everyone's opinion.${p.open_corrections ? ` ${p.open_corrections} correction(s) are waiting for an editor.` : ''}</p>
+</section>`;
+}
+
+/** Every source review as a row: its value, the transaction the source recorded, and its provenance. */
+function sourceReviewRows(p) {
+    const byKey = new Map(p.sources.map((s) => [s.key, s]));
+    return p.signals.map((s) => {
+        const src = byKey.get(s.source_key);
+        const badge = evidenceBadge(s, src);
+        const facts = reviewFacts(s);
+        const reviewed = s.source_published_at ? kit.when(s.source_published_at) : null;
+        const provenance = html`${sourceShortName(src && src.name, s.source_key)} · from a source item ${s.source_item_id} r${String(s.item_revision)} · read ${t(s.provenance && s.provenance.retrieved_at)}${s.provenance && s.provenance.license_note ? html` · licence: ${s.provenance.license_note}` : ''}${facts.length ? html` · ${facts.join(' · ')}` : ''}`;
+        const link = safeUrl(s.canonical_url) || safeUrl(src && src.homepage_url);
+        return kit.row({
+            attrs: { id: s.signal_id },
+            title: signalValue(s),
+            badge,
+            meta: reviewed ? reviewed.text : '',
+            metaIso: reviewed ? reviewed.iso : '',
+            subHtml: String(provenance),
+            trail: link ? `<a href="${ssr.escapeHtml(link)}" rel="nofollow noopener">Open</a>` : '',
+        });
+    });
+}
+
+function sourceReviewsSection(p) {
+    if (!p.signals.length) return '';
+    const rows = sourceReviewRows(p);
+    return raw(kit.section({
+        id: 'source-reviews', title: 'Reviews from sources', count: p.signals.length,
+        note: 'Each row keeps its source, when it was read, and whether the source recorded a purchase. A purchase on the source\'s record is evidence the reviewer bought it, not that the review is true. The words stay with the people who wrote them.',
+        cls: 'rv-review-list', body: kit.list(rows),
+    }));
+}
+
 function entityPage(p, { discussion, actor, flash, members = null, elsewhere = [], seen = {}, records = null, reviewError = null, reviewValues = null }) {
     const en = p.entity;
     // Something of its own to show (members' reviews or official records): the empty source sections stay out.
     const own = (members && members.stats.count) || (records && (records.complaints || records.housing || records.inspections.length));
-    const limits = [];
-    for (const s of p.sources) {
-        if (s.stale) limits.push(html`${s.name || s.key}: the source was stale when last checked${s.last_success_at ? html` (last successful fetch ${t(s.last_success_at)})` : ''}.`);
-        if (s.trust.limitation) limits.push(html`${s.name || s.key}: ${s.trust.limitation.value}`);
-        if (s.trust.verification) limits.push(html`${s.name || s.key} verification: ${s.trust.verification.value}`);
-    }
-    if (p.entity_trust.limitation) limits.push(html`${p.entity_trust.limitation.value}`);
     const otherNames = p.aliases.filter((a) => a.type === 'name' && a.value !== en.name);
     return html`${crumbs([{ name: 'Reviews', url: '/' }, { name: en.name }])}
 <article class="rv-entity">
@@ -527,16 +685,11 @@ ${records ? recordsSection(records, en) : ''}
 ${members ? memberSection(members, { entity: en, actor, editor: p.editor, error: reviewError, values: reviewValues }) : ''}
 ${p.merged_from.length ? html`<p class="rv-muted">Includes the signals of ${p.merged_from.map((m, i) => html`${i ? ', ' : ''}${m.name}`)} (merged here; see <a href="${epath(en)}/history#merges">history</a>).</p>` : ''}
 ${p.aggregate || p.signals.length || p.sources.length || !own ? aggregateSection(p) : ''}
+${methodBox(p)}
 ${p.summary || p.editor || !own ? summarySection(p) : ''}
-${p.signals.length || p.sources.length || p.inactive_signals.length ? html`<section><h2 id="signals">Signals from sources (${String(p.signals.length)})</h2>
-${p.signals.length ? signalTable(p.signals, { caption: 'Signals from sources, with provenance' }) : html`<p class="rv-muted">No source has stated anything about this entity yet.</p>`}
+${sourcesSection(p)}
+${sourceReviewsSection(p)}
 ${p.inactive_signals.length ? html`<p class="rv-muted">${String(p.inactive_signals.length)} earlier signal(s) were replaced or withdrawn by their sources: <a href="${epath(en)}/history#signals">history</a>.</p>` : ''}
-</section>
-<section><h2 id="limits">Sources and limitations</h2>
-${p.sources.length ? html`<ul>${p.sources.map((s) => html`<li><strong>${s.name || s.key}</strong>${safeUrl(s.homepage_url) ? html` (<a href="${safeUrl(s.homepage_url)}" rel="nofollow noopener">site</a>)` : ''}${s.terms_note ? html`<br><span class="rv-muted">Terms: ${s.terms_note}</span>` : ''}${s.trust.aggregate ? html`<br><span class="rv-tag">excluded from the aggregate</span> ${s.trust.aggregate.note || ''}` : ''}</li>`)}</ul>` : html`<p class="rv-muted">No sources yet.</p>`}
-${limits.length ? html`<ul class="rv-limits">${limits.map((l) => html`<li>${l}</li>`)}</ul>` : ''}
-<p class="rv-muted">Coverage is what the sources above returned, nothing more: a source that samples recent reviews, one language or one shop describes that sample, not everyone's opinion.${p.open_corrections ? ` ${p.open_corrections} correction(s) are waiting for an editor.` : ''}</p>
-</section>` : ''}
 ${elsewhereSection(elsewhere, en, { seen, actor, editor: p.editor })}
 ${otherNames.length || p.links.length ? html`<section><h2>Also known as and related</h2>
 ${otherNames.length ? html`<p>Also known as ${otherNames.map((a, i) => html`${i ? ', ' : ''}${a.value}`)}</p>` : ''}

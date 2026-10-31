@@ -299,6 +299,7 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
         const signedIn = !!req.actor.subject;
         send(req, res, status, views.entityPage(p, { discussion, actor: req.actor, flash: req.query.saved ? 'Saved.' : null, members, elsewhere, seen, records, reviewError, reviewValues }), {
             decision: p.decision, title: e.name, cache: discussion.state === 'ok' || signedIn ? null : 'public', path: svc.entityPath(e),
+            styles: ['kit.css'], localStyles: ['css/outcomes.css'],
             description: e.description && !svc.LOCAL_KINDS.has(e.kind) ? e.description
                 : `${e.name}${e.description ? ` (${e.description})` : ''}: ${members.stats.count ? `${members.stats.average} out of 5 from ${members.stats.count} OpenVibe member review${members.stats.count === 1 ? '' : 's'}, ` : ''}review signals${p.sources.length ? ` from ${p.sources.map((s) => s.name || s.key).join(', ')}` : ''}, and every other review site in one place.`,
             canonical: p.entity.url, jsonLd: structuredData(p, config, members),

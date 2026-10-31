@@ -80,7 +80,7 @@ t('a recommendation-only entity: AggregateRating is the real share and count, on
         const page = await req(h, 'GET', `/e/${e.slug}`);
         const game = jsonLd(page.text).find((x) => x['@type'] === 'VideoGame');
         assert.deepStrictEqual(game.aggregateRating, { '@type': 'AggregateRating', ratingValue: 75, ratingCount: 4, bestRating: 100, worstRating: 0 });
-        assert.match(noScripts(page.text), /75%<\/strong> recommend: 3 of 4/);
+        assert.match(noScripts(page.text), /75%<\/strong> recommend, from 4 reviews, 4 of them bought on Steam/);
         assert.ok(!/★/.test(page.text));
     } finally { await h.stop(); }
 });
@@ -105,7 +105,7 @@ t('every public page reads without JavaScript; sitemaps, feeds and robots follow
         assert.strictEqual(robots(page.text), 'index, follow');
         assert.strictEqual(page.headers.get('cache-control'), 'public, max-age=60, stale-while-revalidate=3600');
         const text = noScripts(page.text);
-        for (const needle of ['Portal 2', '50%</strong> recommend', 'Half of the sample recommends it', 'Retrieved', 'steam-reviews-portal-2', 'Computation', '/history', '/correct', 'Discussion']) assert.ok(text.includes(needle), needle);
+        for (const needle of ['Portal 2', '50%</strong> recommend', 'Half of the sample recommends it', 'from a source item', 'Steam', 'Computation', '/history', '/correct', 'Discussion']) assert.ok(text.includes(needle), needle);
         assert.ok(jsonLd(page.text).some((x) => x['@type'] === 'Review'));
         sm = await req(h, 'GET', '/sitemaps/entities-1.xml');
         assert.ok(sm.text.includes(`http://reviews.test/e/${e.slug}`));
