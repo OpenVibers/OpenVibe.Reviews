@@ -21,6 +21,29 @@ const tl = (v) => raw(ssr.timeTag(v, { label: v ? new Date(v).toISOString().repl
 const e = encodeURIComponent;
 const n = (x) => (x == null ? '' : Number(x).toLocaleString('en-US'));
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** A date people read: "20 Sep 2026". The page never prints a raw timestamp. */
+function dateWords(v) {
+    if (!v) return '';
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+// Steam's language field is a slug; people read a language name.
+const LANGUAGE_LABEL = {
+    english: 'English', german: 'German', french: 'French', italian: 'Italian', koreana: 'Korean', spanish: 'Spanish',
+    schinese: 'Simplified Chinese', tchinese: 'Traditional Chinese', russian: 'Russian', thai: 'Thai', japanese: 'Japanese',
+    portuguese: 'Portuguese', polish: 'Polish', danish: 'Danish', dutch: 'Dutch', finnish: 'Finnish', norwegian: 'Norwegian',
+    swedish: 'Swedish', hungarian: 'Hungarian', czech: 'Czech', romanian: 'Romanian', turkish: 'Turkish', brazilian: 'Brazilian Portuguese',
+    bulgarian: 'Bulgarian', greek: 'Greek', ukrainian: 'Ukrainian', vietnamese: 'Vietnamese', indonesian: 'Indonesian', latam: 'Latin American Spanish',
+};
+function languageLabel(v) {
+    const s = String(v || '').trim();
+    if (!s) return '';
+    return LANGUAGE_LABEL[s.toLowerCase()] || s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 const KIND_LABEL = { product: 'Product', game: 'Game', software: 'Software', service: 'Service', place: 'Place', organization: 'Organization', media: 'Media', other: 'Other',
     employer: 'Employer', landlord: 'Landlord', restaurant: 'Restaurant', business: 'Local business', hosting: 'Hosting provider', app: 'App', vehicle: 'Vehicle',
     community: 'Community', platform: 'Platform' };
@@ -74,8 +97,8 @@ function trustBits(trust = {}) {
     if (trust.received_for_free === true) bits.push({ key: 'free', text: 'received for free' });
     if (trust.written_during_early_access === true) bits.push({ key: 'early', text: 'written during early access' });
     if (trust.verified_purchase === true) bits.push({ key: 'verified', text: 'verified purchase' });
-    if (trust.playtime_at_review_min != null) bits.push({ key: 'playtime', text: `${n(Math.round(trust.playtime_at_review_min / 60))} h played at review` });
-    if (trust.language) bits.push({ key: 'language', text: `language: ${trust.language}` });
+    if (trust.playtime_at_review_min != null) bits.push({ key: 'playtime', text: `${n(Math.round(trust.playtime_at_review_min / 60))} h played` });
+    if (trust.language) bits.push({ key: 'language', text: languageLabel(trust.language) });
     return bits;
 }
 function trustFacts(trust) { return trustBits(trust).map((b) => b.text).join(' · '); }
@@ -203,7 +226,7 @@ function paragraphs(text) {
 
 function memberReviewItem(r, { entity, editor }) {
     return html`<li><article class="rv-mr" id="${r.id}"><header>${stars(r.rating)} <b>${r.title}</b></header>
-<p class="rv-muted">Written here by ${r.author_name}${r.relation ? html` · ${r.relation}` : ''} · ${t(r.created_at)}${r.edited ? ' (edited)' : ''}</p>
+<p class="rv-muted">Written here by ${r.author_name}${r.relation ? html` · ${r.relation}` : ''} · ${dateWords(r.created_at)}${r.edited ? ' (edited)' : ''}</p>
 <div class="rv-mr-body">${paragraphs(r.body)}</div>
 ${r.mine ? html`<form method="post" action="${epath(entity)}/reviews/${r.id}/remove" class="rv-inline"><button type="submit" class="rv-link-button">Delete my review</button></form>`
         : editor ? html`<form method="post" action="${epath(entity)}/reviews/${r.id}/remove" class="rv-inline"><input type="text" name="reason" placeholder="Reason (kept in the log)" aria-label="Reason for removing" maxlength="300"> <button type="submit" class="rv-link-button">Remove</button></form>` : ''}
@@ -248,7 +271,7 @@ function elsewhereSection(links, entity, { seen = {}, actor = null, editor = fal
 /** One site's rating as a member saw it, with when, how many members saw it, and a way to take it down. */
 function seenLine(r, { entity, actor, editor }) {
     const mine = actor && actor.subject && r.seen_by === actor.subject;
-    return html`<span class="rv-seen"><b>${String(r.value)}</b> <span class="rv-muted">out of ${String(r.best)}${r.count != null ? ` from ${n(r.count)} rating${r.count === 1 ? '' : 's'}` : ''} · seen ${t(r.seen_at)}${r.members > 1 ? ` (${r.members} members)` : ''}</span>${mine || editor ? html` <form method="post" action="/save/${r.id}/remove" class="rv-inline"><input type="hidden" name="entity" value="${entity.slug}">${mine ? '' : html`<input type="text" name="reason" placeholder="Reason (kept in the log)" aria-label="Reason for removing" maxlength="300"> `}<button type="submit" class="rv-link-button">${mine ? 'Remove mine' : 'Remove'}</button></form>` : ''}</span>`;
+    return html`<span class="rv-seen"><b>${String(r.value)}</b> <span class="rv-muted">out of ${String(r.best)}${r.count != null ? ` from ${n(r.count)} rating${r.count === 1 ? '' : 's'}` : ''} · seen ${dateWords(r.seen_at)}${r.members > 1 ? ` (${r.members} members)` : ''}</span>${mine || editor ? html` <form method="post" action="/save/${r.id}/remove" class="rv-inline"><input type="hidden" name="entity" value="${entity.slug}">${mine ? '' : html`<input type="text" name="reason" placeholder="Reason (kept in the log)" aria-label="Reason for removing" maxlength="300"> `}<button type="submit" class="rv-link-button">${mine ? 'Remove mine' : 'Remove'}</button></form>` : ''}</span>`;
 }
 
 /** /save: a member checks the rating another site's page shows (filled in by the Companion, or typed) and saves it. */
@@ -380,7 +403,7 @@ function home({ entities, total, editor, recent = [], kinds = {}, stats = null, 
 <ul class="rv-kinds">${browse.map((k) => html`<li><a href="/k/${k}"><b>${KIND_PLURAL[k]}</b><span class="rv-muted">${kinds[k] ? `${n(kinds[k])} here` : 'Be the first'}</span></a></li>`)}</ul>
 <p><a class="rv-button" href="/review">Write a review</a> <a href="/everywhere">Search every review site</a></p></section>
 ${recent.length ? html`<section class="sc-sec" aria-labelledby="rv-recent-h"><h2 id="rv-recent-h">Latest reviews from members</h2>
-<ul class="rv-recent">${recent.map((r) => html`<li><a href="/e/${r.entity.slug}#${r.id}"><span class="rv-card-head"><b>${r.entity.name}</b> <span class="rv-tag">${KIND_LABEL[r.entity.kind]}</span></span>${stars(r.rating)} <b>${r.title}</b><br><span class="rv-muted">${r.body.length > 160 ? `${r.body.slice(0, 157)}…` : r.body}</span><br><span class="rv-muted">Written here by ${r.author_name} · ${t(r.created_at)}</span></a></li>`)}</ul></section>` : ''}
+<ul class="rv-recent">${recent.map((r) => html`<li><a href="/e/${r.entity.slug}#${r.id}"><span class="rv-card-head"><b>${r.entity.name}</b> <span class="rv-tag">${KIND_LABEL[r.entity.kind]}</span></span>${stars(r.rating)} <b>${r.title}</b><br><span class="rv-muted">${r.body.length > 160 ? `${r.body.slice(0, 157)}…` : r.body}</span><br><span class="rv-muted">Written here by ${r.author_name} · ${dateWords(r.created_at)}</span></a></li>`)}</ul></section>` : ''}
 <section id="entities" class="sc-sec" aria-labelledby="rv-board-h"><h2 id="rv-board-h">Scores from sources</h2>
 ${entities.length ? html`<p class="sc-lede">Each score comes from named sources. Open one to see every signal behind it, when it was read, and how the number was worked out.</p><ul class="rv-board">${entities.map(boardCard)}</ul>`
         : html`<p class="rv-muted">Nothing yet. Entities appear here once a source has stated something about them (or an editor has published a summary).</p>`}
@@ -479,17 +502,18 @@ function aggregateSection(p) {
     const purchasePhrase = (x) => {
         const k = bought(x);
         if (!k) return '';
-        return allSteam(x) ? `${n(k)} of them bought on Steam` : `${n(k)} of them with a purchase on record`;
+        return allSteam(x) ? `${n(k)} bought on Steam` : `${n(k)} with a purchase on record`;
     };
     const ratePurchase = c.rating ? purchasePhrase(c.rating) : '';
     const recPurchase = c.recommendation ? purchasePhrase(c.recommendation) : '';
+    // One plain line first; the revision, when it was computed and the method live in the Computation fold.
+    const recLine = c.recommendation ? html`<p class="rv-agg"><strong>${c.recommendation.percent}%</strong> recommend · ${n(c.recommendation.total)} review${c.recommendation.total === 1 ? '' : 's'}${recPurchase ? html` · ${recPurchase}` : ''}</p>` : '';
+    const rateLine = c.rating ? html`<p class="rv-agg"><strong>${c.rating.on_scale ? `${c.rating.on_scale.value} / ${c.rating.on_scale.best}` : `${c.rating.percent}%`}</strong> · ${n(c.rating.count)} rating${c.rating.count === 1 ? '' : 's'}${ratePurchase ? html` · ${ratePurchase}` : ''}</p>` : '';
     return html`<section class="rv-aggregate">${head}
-<div class="rv-agg-box">
-${c.rating ? html`<p class="rv-agg"><strong>${c.rating.on_scale ? `${c.rating.on_scale.value} / ${c.rating.on_scale.best}` : `${c.rating.percent}%`}</strong> from ${n(c.rating.count)} rating${c.rating.count === 1 ? '' : 's'}${ratePurchase ? html`, ${ratePurchase}` : ''}${c.rating.on_scale ? html` <span class="rv-muted">(${c.rating.percent}% of the best possible rating)</span>` : ''}</p>` : ''}
-${c.recommendation ? html`<p class="rv-agg"><strong>${c.recommendation.percent}%</strong> recommend, from ${n(c.recommendation.total)} review${c.recommendation.total === 1 ? '' : 's'}${recPurchase ? html`, ${recPurchase}` : ''}</p>` : ''}
-<p class="rv-muted">Aggregate revision ${String(p.aggregate.revision)}, computed ${tl(p.aggregate.computed_at)} from ${String(r.inputs.length)} signal${r.inputs.length === 1 ? '' : 's'} of ${String(r.sources.length)} source${r.sources.length === 1 ? '' : 's'}, observed ${t(r.observed.earliest)} to ${t(r.observed.latest)}. <a href="/about#method">Method ${r.method}</a>.</p>
-</div>
-<details><summary>Computation</summary><ul>${r.computation.map((line) => html`<li><code>${line}</code></li>`)}</ul>
+<div class="rv-agg-box">${recLine}${rateLine}</div>
+<details><summary>Computation</summary>
+<p class="rv-muted">Aggregate revision ${String(p.aggregate.revision)}, computed ${dateWords(p.aggregate.computed_at)} from ${String(r.inputs.length)} signal${r.inputs.length === 1 ? '' : 's'} of ${String(r.sources.length)} source${r.sources.length === 1 ? '' : 's'}, observed ${dateWords(r.observed.earliest)} to ${dateWords(r.observed.latest)}. <a href="/about#method">Method ${r.method}</a>.</p>
+<ul>${r.computation.map((line) => html`<li><code>${line}</code></li>`)}</ul>
 <p>Inputs: ${r.inputs.map((i, k) => html`${k ? ', ' : ''}<a href="#${i.signal_id}">${i.signal_id}</a>`)}</p>
 ${r.excluded.length ? html`<p>Left out:</p><ul>${r.excluded.map((x) => html`<li><a href="#${x.signal_id}">${x.signal_id}</a>${byId.get(x.signal_id) ? html` (${byId.get(x.signal_id).source_key})` : ''}: ${REASON_LABEL[x.reason] || x.reason}${x.note ? html` — ${x.note}` : ''}</li>`)}</ul>` : html`<p class="rv-muted">Nothing was left out.</p>`}
 </details></section>`;
@@ -616,7 +640,7 @@ function sourceCard(src, signals) {
     return html`<li class="rv-source-card">
 <p class="rv-source-head"><b>${src.name || sourceShortName(null, src.key)}</b></p>
 ${figures.length ? figures : html`<p class="rv-muted">No qualifying signal: the source did not state a scale and a count. ${n(signals.length)} signal${signals.length === 1 ? '' : 's'}.</p>`}
-<p class="rv-muted">Read${readAt ? html` ${tl(readAt)}` : ''}${site ? html` · <a href="${site}" rel="nofollow noopener">source site</a>` : ''}</p>
+<p class="rv-muted">Read${readAt ? html` ${dateWords(readAt)}` : ''}${site ? html` · <a href="${site}" rel="nofollow noopener">source site</a>` : ''}</p>
 ${src.trust && src.trust.aggregate ? html`<p>${raw(kit.badge('Excluded from the aggregate', 'warn'))} <span class="rv-muted">${src.trust.aggregate.note || 'an editor excluded this source'}</span></p>` : ''}
 ${limits.length ? html`<p class="rv-muted">${limits.join(' · ')}</p>` : ''}
 ${src.terms_note ? html`<details class="rv-source-terms"><summary>Terms</summary><p class="rv-muted">${src.terms_note}</p></details>` : ''}
@@ -647,10 +671,11 @@ function sourceReviewRows(p) {
         const badge = evidenceBadge(s, src);
         const facts = reviewFacts(s);
         const reviewed = s.source_published_at ? kit.when(s.source_published_at) : null;
-        const provenance = html`${sourceShortName(src && src.name, s.source_key)} · from a source item ${s.source_item_id} r${String(s.item_revision)} · read ${t(s.provenance && s.provenance.retrieved_at)}${s.provenance && s.provenance.license_note ? html` · licence: ${s.provenance.license_note}` : ''}${facts.length ? html` · ${facts.join(' · ')}` : ''}`;
+        const read = dateWords(s.provenance && s.provenance.retrieved_at);
+        const provenance = html`${sourceShortName(src && src.name, s.source_key)}${read ? html` · read ${read}` : ''}${facts.length ? html` · ${facts.join(' · ')}` : ''}`;
         const link = safeUrl(s.canonical_url) || safeUrl(src && src.homepage_url);
         return kit.row({
-            attrs: { id: s.signal_id },
+            attrs: { id: s.signal_id, 'data-item-id': s.source_item_id, 'data-item-revision': String(s.item_revision) },
             title: signalValue(s),
             badge,
             meta: reviewed ? reviewed.text : '',

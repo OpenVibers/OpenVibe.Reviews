@@ -85,13 +85,13 @@ t('outcome 3: every rating carries its sample, and the purchases inside the samp
         await importItem(h, signal('steam-reviews-portal-2', 'nay', { voted_up: false, steam_purchase: false, received_for_free: false }));
         const game = await portal(h);
         const page = (await req(h, 'GET', `/e/${game.slug}`)).text;
-        assert.match(page, /<strong>66\.7%<\/strong> recommend, from 3 reviews, 2 of them bought on Steam/);
+        assert.match(page, /<strong>66\.7%<\/strong> recommend · 3 reviews · 2 bought on Steam/);
 
         addShop(h);
         await importItem(h, productItem({ value: 4.2, best: 5, count: 120, url: 'https://shop.example/p/portal-2' }));
         const product = await createEntity(h, { name: 'Widget 3000', kind: 'product', aliases: [{ type: 'source', value: 'shop-example' }] });
         const shopPage = (await req(h, 'GET', `/e/${product.slug}`)).text;
-        assert.match(shopPage, /<strong>4\.2 \/ 5<\/strong> from 120 ratings/);
+        assert.match(shopPage, /<strong>4\.2 \/ 5<\/strong> · 120 ratings/);
 
         // A members' rating carries its own sample too.
         const ana = cookieFor(userToken({ subject: subject(), username: 'ana' }));
@@ -113,7 +113,9 @@ t('outcome 4: every card says where the review came from and when', async () => 
         const ana = cookieFor(userToken({ subject: subject(), username: 'ana' }));
         assert.strictEqual((await req(h, 'POST', `/e/${e.slug}/reviews`, { cookie: ana, form: { rating: 4, title: 'Still good', body: BODY, relation: 'Played it' } })).status, 303);
         const page = (await req(h, 'GET', `/e/${e.slug}`)).text;
-        assert.match(page, /Steam · from a source item itm_[0-9A-Z]+ r1 · read/, 'a source review names its source, item, origin and read time');
+        assert.match(page, /Steam · read 20 Sep 2026 · 10 h played · English/, 'a source review names its source, when it was read, and its facts');
+        assert.match(page, /data-item-id="itm_[0-9A-Z]+"/, 'the item id is kept as a data attribute');
+        assert.ok(!/from a source item itm_/.test(page), 'the raw item id is not read by people');
         assert.match(page, /<time datetime="2026-09-01T00:00:00.000Z">/, 'the source date is on the row');
         assert.match(page, /<article class="rv-mr" id="mrv_[0-9A-Z]{26}">[\s\S]{0,700}Written here by ana · Played it · /, 'a member review keeps its origin, author, relation and date');
         assert.match((await req(h, 'GET', '/')).text, /Written here by ana · /, 'the home card keeps it too');
@@ -164,7 +166,7 @@ t('outcome 7: sources sit side by side, each with its own count', async () => {
         const steamCard = cards.slice(steamAt);
         assert.match(shopCard, /4\.2 \/ 5<\/span> <span class="rv-muted">from 120 ratings/);
         assert.match(steamCard, /50%<\/span> <span class="rv-muted">recommend from 2 reviews/);
-        assert.match(page, /<strong>4\.2 \/ 5<\/strong> from 120 ratings/, 'the aggregate keeps the rating sample');
-        assert.match(page, /<strong>50%<\/strong> recommend, from 2 reviews/, 'the aggregate keeps the recommendation sample');
+        assert.match(page, /<strong>4\.2 \/ 5<\/strong> · 120 ratings/, 'the aggregate keeps the rating sample');
+        assert.match(page, /<strong>50%<\/strong> recommend · 2 reviews · 2 bought on Steam/, 'the aggregate keeps the recommendation sample');
     } finally { await h.stop(); }
 });
