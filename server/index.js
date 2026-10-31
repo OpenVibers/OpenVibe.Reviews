@@ -103,7 +103,10 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
 
     let server = null;
     if (listen) {
-        await new Promise((resolve) => { server = app.listen(config.port, config.host, resolve); });
+        // Socket activation (2026-10-31): systemd's .socket unit holds the listener across restarts, so a deploy
+        // queues requests in the kernel instead of answering 502. Without the socket unit, the usual listen.
+        const socketActivated = process.env.LISTEN_FDS === '1' && Number(process.env.LISTEN_PID) === process.pid;
+        await new Promise((resolve) => { server = app.listen(...(socketActivated ? [{ fd: 3 }] : [config.port, config.host]), resolve); });
         server.keepAliveTimeout = 65000;
         log.log(`[Reviews] ${config.nodeEnv} on http://${config.host}:${config.port} → ${config.baseUrl}`);
     }
