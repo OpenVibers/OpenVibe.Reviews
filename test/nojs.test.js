@@ -58,8 +58,8 @@ t('AggregateRating JSON-LD is absent without signals, present only while signals
         assert.deepStrictEqual(product.aggregateRating, { '@type': 'AggregateRating', ratingValue: 4.4, ratingCount: 321, bestRating: 5 });
         assert.ok(!ld.some((x) => x['@type'] === 'Review'), 'no Review without a published summary');
         const visible = noScripts(page.text);
-        assert.match(visible, /4\.4 \/ 5<\/strong> from 321 ratings/);
-        assert.match(visible, new RegExp(item.id));
+        assert.match(visible, /<strong>4\.4 \/ 5<\/strong> · 321 ratings/);
+        assert.match(visible, new RegExp(`data-item-id="${item.id}"`));
 
         await deliver(h, sourcesEvent('sources.item.removed', h.sources.remove(item.id, 'takedown'), { reason: 'takedown' }));
         page = await req(h, 'GET', `/e/${e.slug}`);
@@ -80,7 +80,7 @@ t('a recommendation-only entity: AggregateRating is the real share and count, on
         const page = await req(h, 'GET', `/e/${e.slug}`);
         const game = jsonLd(page.text).find((x) => x['@type'] === 'VideoGame');
         assert.deepStrictEqual(game.aggregateRating, { '@type': 'AggregateRating', ratingValue: 75, ratingCount: 4, bestRating: 100, worstRating: 0 });
-        assert.match(noScripts(page.text), /75%<\/strong> recommend: 3 of 4/);
+        assert.match(noScripts(page.text), /75%<\/strong> recommend · 4 reviews · 4 bought on Steam/);
         assert.ok(!/★/.test(page.text));
     } finally { await h.stop(); }
 });
@@ -105,7 +105,7 @@ t('every public page reads without JavaScript; sitemaps, feeds and robots follow
         assert.strictEqual(robots(page.text), 'index, follow');
         assert.strictEqual(page.headers.get('cache-control'), 'public, max-age=60, stale-while-revalidate=3600');
         const text = noScripts(page.text);
-        for (const needle of ['Portal 2', '50%</strong> recommend', 'Half of the sample recommends it', 'Retrieved', 'steam-reviews-portal-2', 'Computation', '/history', '/correct', 'Discussion']) assert.ok(text.includes(needle), needle);
+        for (const needle of ['Portal 2', '50%</strong> recommend', 'Half of the sample recommends it', 'Steam · read', 'Steam', 'Computation', '/history', '/correct', 'Discussion']) assert.ok(text.includes(needle), needle);
         assert.ok(jsonLd(page.text).some((x) => x['@type'] === 'Review'));
         sm = await req(h, 'GET', '/sitemaps/entities-1.xml');
         assert.ok(sm.text.includes(`http://reviews.test/e/${e.slug}`));

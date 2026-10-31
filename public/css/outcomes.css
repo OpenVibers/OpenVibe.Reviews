@@ -1,0 +1,20 @@
+/* Entity-page outcomes from the market research (2026-10-31): each source keeps its own count beside the others,
+   and every review row carries its provenance. The rows and the fold are openvibe-shared/kit, loaded on entity
+   pages only; these rules use the site's theme tokens, so no colour is introduced here. */
+.rv-source-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); }
+.rv-source-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 12px 14px; border: 1px solid var(--rv-line); border-radius: 12px; background: var(--rv-panel); overflow-wrap: anywhere; }
+.rv-source-head { margin: 0; font-size: 1rem; line-height: 1.3; }
+.rv-source-figure { margin: 0; }
+.rv-source-figure .rv-big { font-size: 1.45rem; }
+.rv-source-card details { margin-top: 4px; }
+.rv-source-card details p { margin: 6px 0 0; }
+.rv-review-list .ovk-row:target { outline: 2px solid var(--rv-accent); outline-offset: 2px; }
+/* A review row's provenance is a full sentence, not a one-line list subtitle: let it wrap on a phone. */
+.rv-review-list .ovk-row-top { flex-wrap: wrap; }
+.rv-review-list .ovk-row-top strong { white-space: normal; overflow: visible; text-overflow: clip; }
+.rv-review-list .ovk-row-top time { margin-left: 0; }
+.rv-review-list .ovk-row-sub { align-items: flex-start; }
+.rv-review-list .ovk-row-sub > span:first-child { white-space: normal; overflow: visible; text-overflow: clip; }
+/* The method's rows are sentences too; without this the kit's one-line rule ellipsises them. */
+.rv-method .ovk-row-sub { align-items: flex-start; }
+.rv-method .ovk-row-sub > span:first-child { white-space: normal; overflow: visible; text-overflow: clip; }
