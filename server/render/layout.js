@@ -114,7 +114,7 @@ function renderPage(o) {
             agentHeadTags({ canonical: o.canonical || `${config.baseUrl}${o.path || '/'}` })].filter(Boolean).join('\n'),
         release: RELEASE,
         mainClass: 'rv-main',
-        header: `<header class="rv-bar"><a class="rv-brand" href="/">${SITE_NAME}</a><form class="rv-search" action="/search" method="get" role="search"><label for="rv-q" class="rv-sr">Search entities</label><input id="rv-q" name="q" type="search" placeholder="Search entities" value="${esc(o.query || '')}"><button type="submit">Search</button></form><noscript><span class="rv-account">${who}</span></noscript></header>`,
+        header: `<header class="rv-bar"><a class="rv-brand" href="/">${SITE_NAME}</a><form class="rv-search" action="/search" method="get" role="search"><label for="rv-q" class="rv-sr">Search employers, landlords, restaurants and hosts</label><input id="rv-q" name="q" type="search" placeholder="An employer, landlord, restaurant or host" value="${esc(o.query || '')}"><button type="submit">Search</button></form><noscript><span class="rv-account">${who}</span></noscript></header>`,
         body: o.body,
         // The shipped list is a part a reader rarely needs: a fold on a phone, the section it was where there is room.
         shipped: o.path === '/' ? foldBlock({ id: 'shipped', head: `<h2 id="rv-shipped-h">Recently shipped on ${SITE_NAME}</h2>`, html: frame.shipped({ service: 'reviews', title: `Recently shipped on ${SITE_NAME}` }) }) : '',
