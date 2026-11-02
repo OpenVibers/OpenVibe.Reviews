@@ -97,7 +97,7 @@ table { border-collapse: collapse; }
 .rv-signal.rv-withdrawn, .rv-signal.rv-superseded { opacity: .7; }
 .rv-proscons { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 24px; }
 .rv-cite { font-size: 12px; text-decoration: none; white-space: nowrap; }
-.rv-cite-gone { color: var(--rv-warn); text-decoration: line-through; }
+.rv-cite-gone { color: var(--warning-text, var(--rv-warn)); text-decoration: line-through; }
 .rv-unsupported { color: var(--rv-muted); }
 .rv-point { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 12px; }
 .rv-point select { width: 100%; }
@@ -159,7 +159,9 @@ main .rv-h-panel-h { margin: 0 0 12px; padding: 0; border: 0; font-size: 1rem; }
 .rv-h-list a, .rv-h-rank a { display: flex; flex-direction: column; gap: 2px; height: 100%; padding: 12px 14px; border: 1px solid var(--rv-line); border-radius: 12px; background: var(--rv-panel); color: var(--rv-text); text-decoration: none; font-size: 14.5px; }
 .rv-h-list a:hover, .rv-h-rank a:hover { border-color: var(--rv-accent); }
 .rv-h-list b, .rv-h-rank b { font-size: 1rem; }
-.rv-h-crit { color: var(--rv-warn); }
+/* Words in the warning colour take the theme's text twin (--warning-text): the raw amber was 1.55:1 on Daylight
+   (WCAG sweep, 2026-11-01). Borders keep --rv-warn. */
+.rv-h-crit { color: var(--warning-text, var(--rv-warn)); }
 .rv-h-rank { counter-reset: rv-rank; }
 .rv-h-rank li { counter-increment: rv-rank; }
 .rv-h-rank b::before { content: counter(rv-rank) ". "; color: var(--rv-muted); font-weight: 600; }
