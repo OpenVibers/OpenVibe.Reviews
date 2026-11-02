@@ -29,7 +29,6 @@ const seo = require('openvibe-publishing/seo');
 const { renderPage, SITE_SUMMARY } = require('../render/layout');
 const views = require('../render/views');
 // The short home (the owner's rule, 2026-10-30): pick blocks and folds.
-const { pickRules } = require('../render/short');
 const { ratingForStructuredData } = require('../reviews/aggregate');
 const { actorMiddleware, crossSite } = require('./common');
 const everywhere = require('../reviews/everywhere');
@@ -163,7 +162,6 @@ function createPages({ svc, platform, sync, viewers, config, log = console, limi
         send(req, res, 200, views.home({ entities, total: all.total, editor: isEditor(req), recent, kinds, stats, sites: everywhere.SITES.length, inspections, hazardous, complaints }), {
             robots: 'index, follow', cache: 'public', active: 'home', path: '/', summary: SITE_SUMMARY, styles: [showcase.STYLESHEET], description: HOME_DESCRIPTION,
             jsonLd: views.homeJsonLd({ base: config.baseUrl.replace(/\/+$/, ''), entities }),
-            inlineStyles: [`@supports selector(:has(*)){@media (max-width:640px){${pickRules('records', recordIds)}}}`],
         });
     }));
     // What shipped on OpenVibe.Reviews: the shared update log every OpenVibe site has.
