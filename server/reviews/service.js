@@ -2050,9 +2050,14 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
 
         /** Entities with at least one live signal or a published summary (the home page). */
         async entitiesWithData(limit = 60) {
-            return (await Promise.all((await db.prepare(`SELECT e.* FROM review_entities e WHERE e.state = 'active' AND (
-                    EXISTS (SELECT 1 FROM review_signals s JOIN review_entities m ON m.id = s.entity_id WHERE s.status = 'active' AND (m.id = e.id OR m.merged_into = e.id))
-                    OR EXISTS (SELECT 1 FROM review_summaries u WHERE u.entity_id = e.id AND u.state = 'published'))
+            // From the few entities that have data to the entities, not the other way round: the EXISTS form ran its
+            // subquery once per active entity (6,921 on 2026-11-02, 178 ms of the home); this one reads the active
+            // signals (an entity's own, or one merged into it) and published summaries first (2.5 ms, the same rows).
+            return (await Promise.all((await db.prepare(`WITH has AS (
+                    SELECT s.entity_id AS id FROM review_signals s WHERE s.status = 'active'
+                    UNION SELECT m.merged_into FROM review_signals s JOIN review_entities m ON m.id = s.entity_id WHERE s.status = 'active' AND m.merged_into IS NOT NULL
+                    UNION SELECT u.entity_id FROM review_summaries u WHERE u.state = 'published')
+                SELECT e.* FROM review_entities e JOIN has h ON h.id = e.id WHERE e.state = 'active'
                 ORDER BY e.updated_at DESC LIMIT ?`).all(limit)).map(async (e) => ({ entity: e, aggregate: aggregateView(await q.lastAggregate.get(e.id)) }))));
         },
 
