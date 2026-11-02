@@ -170,7 +170,7 @@ function createApp({ config, telemetry = null, svc, viewers, platform, sources, 
 
     app.post(['/e/*', '/editor/*'], limiter(10 * 60000, 120));
     app.post('/e/:slug/correct', limiter(60 * 60000, 20));
-    const pages = createPages({ svc, platform, sync, viewers, config, log, limits, home: createHome({ db }) });
+    const pages = createPages({ svc, platform, sync, viewers, config, log, limits, home: createHome({ db, cacheMs: config.homeCacheMs }) });
     // The agent layer (openvibe-shared/agent-layer): /.well-known/agent.json and the Markdown twins of the
     // public pages. Mounted before the page routes but gated to twin requests only, so a browser keeps the
     // page's own render (signed in or out) and only a twin request reaches the agent layer. The manifest

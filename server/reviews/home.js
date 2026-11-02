@@ -9,10 +9,36 @@
  *                        critical, the newest grade on record, the borough and cuisine
  *   mostHazardous(n)     buildings by NYC HPD's open class C (immediately hazardous) violations
  *   mostComplaints(n)    companies by the complaints consumers sent the CFPB
+ *
+ * With cacheMs (production: 5 minutes), each answer is kept that long and then served at once while one refresh runs
+ * in the background, for up to an hour (stale-while-revalidate). The counts walk every record (230 ms on 2026-11-02,
+ * most of the home's time at the origin) and change slowly; the lists change with each day's import.
  */
 const ACTIVE_RECORD = "r.status = 'active'";
+const STALE_MS = 60 * 60 * 1000;
 
-function createHome({ db }) {
+/** fn's answers kept cacheMs per argument list; past it, the old one is served while one refresh runs. */
+function remember(fn, { cacheMs, now }) {
+    if (!(cacheMs > 0)) return fn;
+    const kept = new Map();
+    return async (...args) => {
+        const key = JSON.stringify(args);
+        const hit = kept.get(key);
+        const t = now();
+        if (hit && t - hit.at < cacheMs) return hit.value;
+        if (hit && t - hit.at < STALE_MS) {
+            if (!hit.refresh) {
+                hit.refresh = fn(...args).then((value) => { kept.set(key, { at: now(), value }); }, () => { hit.refresh = null; });
+            }
+            return hit.value;
+        }
+        const value = await fn(...args);
+        kept.set(key, { at: now(), value });
+        return value;
+    };
+}
+
+function createHome({ db, cacheMs = 0, now = () => Date.now() }) {
     const q = {
         stats: db.prepare(`SELECT (SELECT COUNT(*) FROM review_entities WHERE state = 'active') AS pages,
                                   (SELECT COUNT(*) FROM review_records r WHERE ${ACTIVE_RECORD}) AS records,
@@ -44,7 +70,7 @@ function createHome({ db }) {
     };
     const n = (v) => (v == null ? null : Number(v));
     const lim = (x, d) => Math.min(50, Math.max(1, Number(x) || d));
-    return {
+    const api = {
         async stats() {
             const r = (await q.stats.get()) || {};
             return { pages: n(r.pages) || 0, records: n(r.records) || 0, signals: n(r.signals) || 0, memberReviews: n(r.member_reviews) || 0, seen: n(r.seen) || 0 };
@@ -59,6 +85,8 @@ function createHome({ db }) {
             return (await q.complaints.all(lim(limit, 6))).map((x) => ({ ...x, complaints: n(x.complaints) }));
         },
     };
+    const keep = (fn) => remember(fn, { cacheMs, now });
+    return { stats: keep(api.stats), latestInspections: keep(api.latestInspections), mostHazardous: keep(api.mostHazardous), mostComplaints: keep(api.mostComplaints) };
 }
 
-module.exports = { createHome };
+module.exports = { createHome, remember };
