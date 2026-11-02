@@ -2,16 +2,14 @@
 /**
  * The home on a phone (the owner's short-pages rule, 2026-10-30): one or two screens, app-like.
  *
- *   pickBlock()  several blocks of the same kind, one at a time on a phone, picked with a row of chips. Radio
- *                inputs and :has(), no script: every block stays in the page for crawlers, and a wider screen (or a
- *                browser without :has()) shows them all and no chips.
- *   pickList()   a list of things of the same kind, one at a time on a phone, picked with a row of chips.
+ *   pickBlock()  several blocks of the same kind, all shown, each with its own heading; on a phone the chips are a
+ *                row of links that jump to them (the owner, 2026-10-31: never hide content to shorten).
+ *   pickList()   a list of things of the same kind under one heading, every item shown.
  *   foldBlock()  a part a reader rarely needs, closed on a phone and open where there is room. The page's own markup
  *                keeps it open, so a browser without the script shows it as before; the script closes it on a narrow
  *                screen and remembers the reader's choice.
  *
- * The CSS for both lives in this site's own stylesheet; the rule that shows the picked block is written for the
- * page, because there is one per block.
+ * The CSS lives in this site's own stylesheet.
  */
 const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -25,43 +23,26 @@ function pickBlock({ key, label, head = '', panes }) {
     // A pane with nothing to show is left out, so the chips and the rules that show them match the page.
     panes = (panes || []).filter((p) => p.html);
     if (!panes.length) return '';
-    const chips = panes.map((p, i) => '<input type="radio" name="pick-' + esc(key) + '" id="pk-' + esc(key) + '-' + esc(p.id) + '" value="' + esc(p.id) + '"' + (i === 0 ? ' checked' : '') + '><label for="pk-' + esc(key) + '-' + esc(p.id) + '">' + esc(p.label) + '</label>').join('');
+    const chips = panes.map((p) => '<a class="pick-chip" href="#' + esc(p.id) + '">' + esc(p.label) + '</a>').join('');
     const body = panes.map((p) => '<div class="pick-pane" id="' + esc(p.id) + '">' + p.html + '</div>').join('');
-    return '<div class="pick" id="pick-' + esc(key) + '"><div class="pick-bar"><div class="pick-head"><h2>' + esc(head || label) + '</h2></div><div class="pick-row" role="radiogroup" aria-label="' + esc(label) + '">' + chips + '</div></div><div class="pick-body">' + body + '</div></div>';
+    return '<div class="pick" id="pick-' + esc(key) + '"><div class="pick-bar"><div class="pick-head"><h2>' + esc(head || label) + '</h2></div><nav class="pick-row" aria-label="' + esc(label) + '">' + chips + '</nav></div><div class="pick-body">' + body + '</div></div>';
 }
 
-/** The rule that shows the picked block of a pick block: one per block, so the CSS is written for the page. */
-function pickRule(key, id) {
-    return '.pick:has(#pk-' + key + '-' + id + ':checked) #' + id + '{display:block}';
-}
 
-/** The rules for every block of a pick block, in the order they appear. */
-function pickRules(key, ids) {
-    return ids.map((id) => pickRule(key, id)).join('');
-}
 
 /**
- * A pick list: a list of things of the same kind, one at a time on a phone, picked with a row of chips. The list
- * keeps its own markup and every item stays in the page; the caller marks each item with the index its chip picks.
+ * A pick list: a list of things of the same kind under one heading, every item shown (2026-10-31). The list keeps
+ * its own markup; `labels` is kept for callers and no longer drawn.
  *
  *   pickList({ key, label, head, labels, html })   labels: the chip labels, in the order of the items
  */
 function pickList({ key, label, head = '', labels, html }) {
     labels = labels || [];
     if (!labels.length) return '';
-    const chips = labels.map((l, i) => '<input type="radio" name="pick-' + esc(key) + '" id="pk-' + esc(key) + '-' + i + '" value="' + i + '"' + (i === 0 ? ' checked' : '') + '><label for="pk-' + esc(key) + '-' + i + '">' + esc(l) + '</label>').join('');
-    return '<div class="pick" id="pick-' + esc(key) + '"><div class="pick-bar"><div class="pick-head"><h2>' + esc(head || label) + '</h2></div><div class="pick-row" role="radiogroup" aria-label="' + esc(label) + '">' + chips + '</div></div>' + html + '</div>';
+    return '<div class="pick" id="pick-' + esc(key) + '"><div class="pick-bar"><div class="pick-head"><h2>' + esc(head || label) + '</h2></div></div>' + html + '</div>';
 }
 
-/** The rule that shows the picked item of a pick list: one per item, so the CSS is written for the page. */
-function pickListRule(key, i) {
-    return '.pick#pick-' + key + ':has(#pk-' + key + '-' + i + ':checked) .pick-list>li[data-i="' + i + '"]{display:block}';
-}
 
-/** The rules for every item of a pick list. */
-function pickListRules(key, n) {
-    return Array.from({ length: n }, (_, i) => pickListRule(key, i)).join('');
-}
 
 /**
  * A fold. The head is the heading the block had; the html is what it holds.
@@ -106,4 +87,4 @@ function foldAround(html, needle, id, head) {
     return html.slice(0, p.start) + foldBlock({ id, head, html: p.html }) + html.slice(p.end);
 }
 
-module.exports = { pickBlock, pickRule, pickRules, pickList, pickListRule, pickListRules, foldBlock, foldScript, part, swap, foldAround };
+module.exports = { pickBlock, pickList, foldBlock, foldScript, part, swap, foldAround };
