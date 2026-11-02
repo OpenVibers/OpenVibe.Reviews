@@ -21,6 +21,8 @@ function load(env = process.env) {
         serviceId: 'reviews',
         nodeEnv,
         isProduction,
+        // The home's counts and lists, kept this long (server/reviews/home.js); off outside production unless set.
+        homeCacheMs: Math.max(0, int(env.REVIEWS_HOME_CACHE_MS, isProduction ? 5 * 60 * 1000 : 0)),
         port,
         host: env.HOST || '127.0.0.1',
         baseUrl,
