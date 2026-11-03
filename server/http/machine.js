@@ -115,13 +115,16 @@ function createMachine({ svc, config, releaseLastmod }) {
             name: 'OpenVibe.Reviews',
             summary: SITE_SUMMARY,
             details: 'Every entity page has a JSON representation at the same address plus ".json" (same content). Each signal names its source item, retrieval time and licence note; the aggregate lists its inputs, exclusions and computation (method reviews-aggregate@1). Summaries never carry a rating; AI-drafted summaries are labelled and published only after a person approves them. Review text is not republished.',
+            markdown: true,
+            base: origin,
             sections: [
                 { title: 'Start here', links: [{ title: 'Entities', url: `${origin}/` }, { title: 'How it works', url: `${origin}/about` }] },
-                { title: 'Machine-readable', links: [
-                    { title: 'Sitemap', url: `${origin}/sitemap.xml` },
-                    { title: 'Published summaries (Atom)', url: `${origin}/feed.atom` },
-                    { title: 'Published summaries (JSON Feed)', url: `${origin}/feed.json` },
-                ] },
+            ],
+            optional: [
+                { title: 'Sitemap', url: `${origin}/sitemap.xml` },
+                { title: 'Full text for language models', url: `${origin}/llms-full.txt` },
+                { title: 'Published summaries (Atom)', url: `${origin}/feed.atom` },
+                { title: 'Published summaries (JSON Feed)', url: `${origin}/feed.json` },
             ],
         }));
     });
