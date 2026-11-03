@@ -124,7 +124,10 @@ t('every public page reads without JavaScript; sitemaps, feeds and robots follow
         const rb = await req(h, 'GET', '/robots.txt');
         assert.match(rb.text, /Sitemap: http:\/\/reviews\.test\/sitemap\.xml/);
         assert.match(rb.text, /Disallow: \/editor/);
-        assert.match((await req(h, 'GET', '/llms.txt')).text, /OpenVibe\.Reviews/);
+        const llmsText = (await req(h, 'GET', '/llms.txt')).text;
+        assert.match(llmsText, /OpenVibe\.Reviews/);
+        assert.ok(llmsText.includes('(http://reviews.test/index.md)'), 'home link points at its Markdown twin');
+        assert.ok(llmsText.includes('\n## Optional\n'), 'llms.txt has an Optional section');
         for (const p of ['/', '/about', `/e/${e.slug}/history`, `/e/${e.slug}/summary/1`, '/search?q=portal']) {
             const r = await req(h, 'GET', p);
             assert.strictEqual(r.status, 200, p);
