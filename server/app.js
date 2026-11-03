@@ -205,6 +205,7 @@ function createApp({ config, telemetry = null, svc, viewers, platform, sources, 
         render: require('./agent-pages').createAgentPages({ router: pages.router }).renderPublicPage,
     });
 
+    app.use(require('./link-header').linkHeader());   // SEO-24: the head's twin and llms.txt links, as a Link: header
     app.use(pages.router);
 
     app.use((req, res) => pages.errorPage(req, res, 404, 'Not found', 'Nothing lives at that address.'));
