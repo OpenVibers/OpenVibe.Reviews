@@ -5,6 +5,9 @@
 // page renders exactly as it does for a visitor who is not signed in - the same router, the same builders
 // and the same data. A page behind a person's own token (a watch, a review, an editor) has no twin.
 const PATHS = new Set(['/', '/about', '/everywhere']);
+// The item pages the sitemap lists (places at /e/<slug>) have twins too: each named one in its head and Link header, and it
+// answered 404 (11-03, tools/twin-named-check.js). Only a 200 page whose robots tag says index is twinned.
+const ITEM_RE = /^\/e\/[a-z0-9-]+$/;
 
 /** A response the page code can write to; the first body written is the twin's HTML. */
 function mockRes() {
@@ -53,7 +56,7 @@ function mockReq(path, query) {
 function renderWithRouter(router, path, query) {
     return new Promise((resolve) => {
         const res = mockRes();
-        const keep = (body) => { resolve(typeof body === 'string' ? body : null); return res; };
+        const keep = (body) => { resolve(typeof body === 'string' && res.statusCode === 200 ? body : null); return res; };
         res.send = keep; res.end = keep; res.json = keep;
         try {
             router.handle(mockReq(path, query), res, () => resolve(null));
@@ -66,9 +69,13 @@ function renderWithRouter(router, path, query) {
 function createAgentPages({ router }) {
     async function renderPublicPage(path) {
         const p = String(path || '/').replace(/\/+$/, '') || '/';
-        if (!PATHS.has(p)) return null;
+        const item = ITEM_RE.test(p);
+        if (!PATHS.has(p) && !item) return null;
         const html = await renderWithRouter(router, p, '');
-        return html ? { html, title: null, updated: null } : null;
+        if (!html) return null;
+        // An item that is not public (taken down, unlisted, noindex) has no twin, whatever its address.
+        if (item && !/<meta\s+name=["']robots["']\s+content=["']index/i.test(html)) return null;
+        return { html, title: null, updated: null };
     }
     return { renderPublicPage };
 }
