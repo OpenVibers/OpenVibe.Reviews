@@ -7,7 +7,7 @@
   "runtime": "node 22, express, postgresql",
   "port": 4830,
   "domain": "openvibe.reviews",
-  "contracts": "openvibe-contracts v0.222.0",
+  "contracts": "openvibe-contracts v0.289.1",
   "sdk": "openvibe-sdk v0.82.0",
   "shared": "openvibe-shared v4.109.2",
   "packages": [
@@ -45,5 +45,5 @@
     "SDK outbox events and Search index documents",
     "per-actor limits (openvibe-sdk/limits)"
   ],
-  "updated": "2026-11-03"
+  "updated": "2026-11-05"
 }
