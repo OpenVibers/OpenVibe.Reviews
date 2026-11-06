@@ -21,6 +21,8 @@ function subject(prefix = 'usr') { let s = ''; for (let i = 0; i < 26; i++) s +=
 const EDITOR = subject();
 const READER = subject();
 const WEBHOOK_SECRET = 'test-webhook-secret-not-a-real-one';
+// The OAuth secret the stand-in Network knows: a client that presents another one is refused (invalid_client).
+const OAUTH_SECRET = 'test-service-secret-not-a-real-one';
 
 function userToken({ subject: sub = READER, username = 'someone', role = 'user', aud = ['openvibe.network'], exp = 3600 } = {}) {
     const now = Math.floor(Date.now() / 1000);
@@ -151,7 +153,7 @@ async function boot({ env = {}, sources = fakeSources(), community = null, now, 
     const config = load({
         NODE_ENV: 'test', PORT: '0', HOST: '127.0.0.1', BASE_URL: 'http://reviews.test',
         OV_NETWORK_URL: ISSUER, OV_NETWORK_INTERNAL_URL: '', REVIEWS_GATE_MIN_WORDS: '20',
-        OV_OAUTH_CLIENT_SECRET: 'test-service-secret-not-a-real-one',
+        OV_OAUTH_CLIENT_SECRET: OAUTH_SECRET,
         OV_SOURCES_INTERNAL_URL: 'http://sources.test', OV_COMMUNITY_INTERNAL_URL: 'http://community.test',
         REVIEWS_EDITORS: EDITOR, REVIEWS_EVENTS_SECRET: WEBHOOK_SECRET,
         ...env,
@@ -159,7 +161,13 @@ async function boot({ env = {}, sources = fakeSources(), community = null, now, 
     const fetchImpl = async (url, opts) => {
         const u = new URL(url);
         // The ingest chassis' Sources client mints a client-credentials token here (no network in tests).
-        if (u.pathname === '/oauth/token') return { status: 200, ok: true, json: async () => ({ access_token: 'stub-sources-token', token_type: 'Bearer', expires_in: 300, scope: 'sources.item.read sources.source.read' }) };
+        if (u.pathname === '/oauth/token') {
+            // The Network refuses a client whose secret is wrong (invalid_client): the sign-in's health check reads that.
+            let body = {};
+            try { body = JSON.parse((opts && opts.body) || '{}'); } catch { /* not JSON */ }
+            if (body.client_secret && body.client_secret !== OAUTH_SECRET) return { status: 401, ok: false, json: async () => ({ error: 'invalid_client' }) };
+            return { status: 200, ok: true, json: async () => ({ access_token: 'stub-sources-token', refresh_token: 'stub-refresh-token', token_type: 'Bearer', expires_in: 300, scope: 'sources.item.read sources.source.read' }) };
+        }
         if (u.host === 'sources.test') return sources.fetch(url, opts);
         if (u.host === 'community.test' && community) return community.fetch(url, opts);
         throw new Error(`unexpected outbound fetch ${url}`);
