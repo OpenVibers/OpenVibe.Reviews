@@ -9,10 +9,10 @@
   "domain": "openvibe.reviews",
   "contracts": "openvibe-contracts v0.338.0",
   "sdk": "openvibe-sdk v0.123.0",
-  "shared": "openvibe-shared v4.172.0",
+  "shared": "openvibe-shared v4.173.0",
   "packages": [
     "openvibe-publishing v1.3.0",
-    "openvibe-shared v4.172.0",
+    "openvibe-shared v4.173.0",
     "openvibe-sdk v0.123.0"
   ],
   "capabilities": [
