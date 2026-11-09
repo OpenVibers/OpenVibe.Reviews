@@ -2,6 +2,9 @@
 
 > Review signals gathered across sources with provenance, entity resolution and honest aggregates.
 
+**Live site:** https://openvibe.reviews · **API docs:** https://openvibe.services · **For AI:** https://openvibe.reviews/llms.txt
+**Run it:** `npm ci && npm run dev` (Node 22 or newer) · **Tests:** `npm test`
+
 **Status:** alpha (roadmap Wave 17, Reviews half). **Public at `openvibe.reviews` since 2026-10-09**, after an independent pre-launch security review whose fixes shipped first. On 2026-10-18 it holds about 5,700 entities:
 - 19 Steam games with review signals from Sources;
 - 550 companies with CFPB complaint counts;
