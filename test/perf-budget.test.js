@@ -15,8 +15,8 @@ const BUDGETS = {
     htmlRawKB: 44.2, // 44.2: measured 42.2 with openvibe-shared 4.161.0, plus room for 4.162.0–4.163.0, 2026-11-09
     htmlBrotliKB: 10,   // 9.2 with the short home (2026-10-30: the records' pick block and the fold's scripts); 8.0 (2026-10-22 the richer front page); 6.6 (5.9, 4.6 before the showcase)
     jsFiles: 5,   // 5 (theme-loader, web-runtime, navbar, footer, boost: openvibe-shared/shell adds web-runtime)
-    jsRawKB: 375.1, // 375.1: measured 367.1 with openvibe-shared 4.161.0, plus room for 4.162.0–4.163.0, 2026-11-09
-    jsBrotliKB: 89.5, // 89.5: measured 87.5 with openvibe-shared 4.163.0, plus room for 4.162.0–4.163.0, 2026-11-09
+    jsRawKB: 376.4, // 376.4: measured 376.3 KB raw with openvibe-shared 4.186.0 (2026-11-10: the mark's Working and Thinking states, the Dock and the menu as one sheet, bare controls styled by the loader); 375.1: measured 367.1 with openvibe-shared 4.161.0, plus room for 4.162.0–4.163.0, 2026-11-09
+    jsBrotliKB: 89.8, // 89.8: measured 89.7 KB brotli with openvibe-shared 4.186.0 (2026-11-10: the mark's Working and Thinking states, the Dock and the menu as one sheet, bare controls styled by the loader); 89.5: measured 87.5 with openvibe-shared 4.163.0, plus room for 4.162.0–4.163.0, 2026-11-09
     cssFiles: 2,   // 2 (reviews.css, openvibe-shared showcase.css)
     cssRawKB: 54.6, // 54.6: measured 49.6 with openvibe-shared 4.161.0, plus room for 4.162.0–4.163.0, 2026-11-09
     cssBrotliKB: 11,   // 10.2 with the phone folds as card rows (2026-11-03); 9.9 with the short home (2026-10-30: the pick block's and the fold's own rules); 9.1 with openvibe-shared 4.48.0 (the site switcher on the mark, the menu's Start tab and quick tools; Kit's touch hit areas and the phone navbar fix, 4.44-4.47.3); 8.8 with 10 touch targets (2026-10-29: the site bar, the search, the questions and three lone links); 8.6 the home's fold and phone list rules (2026-10-29); 6.7 with Shared 4.13.0; raised from 8 for openvibe-shared v4.39.0 (+1.5 KB raw of kit/room/showcase CSS); measured 8.2
