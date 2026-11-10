@@ -71,7 +71,6 @@ table { border-collapse: collapse; }
   .rv-infobox { float: none; margin: 0 0 16px; width: 100%; }
   h1 { font-size: 1.5rem; }
 }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 /* Reviews: aggregate, signals, summary */
 .rv-entities { list-style: none; padding: 0; }
 /* The front page's board: one card per entity, its score with a meter and what it rests on. */
