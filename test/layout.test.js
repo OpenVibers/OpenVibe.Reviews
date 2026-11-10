@@ -70,7 +70,7 @@ t('the document head and frame come from openvibe-publishing/layout, robots exac
             assert.match(head, /<link rel="stylesheet" href="\/css\/reviews\.css\?v=[0-9a-f]+">/, `${path}: the reviews stylesheet`);
             assert.match(head, /<meta name="ov-boost" content="reviews@/, `${path}: the boost marker`);
             assert.ok(head.includes('/shared/web-runtime.js'), `${path}: the web runtime`);
-            assert.ok(body.includes('<div id="navbar-mount"></div>'), `${path}: the navbar mount`);
+            assert.ok(body.includes('<div id="navbar-mount"'), `${path}: the navbar mount (4.190.0: the mount wraps the server-rendered nav, with the site name's dropdown inside)`);
             assert.ok(body.includes('<nav class="openvibe-navbar" aria-label="Site"'), `${path}: the server-rendered navigation`);
             assert.ok(body.includes('class="rv-bar"'), `${path}: the site header`);
             assert.ok(body.includes('<main id="main" class="rv-main">'), `${path}: the main element`);
