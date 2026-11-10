@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use OpenVibe.Reviews in research or a product, cite it as below."
+title: openvibe-reviews
+type: software
+authors:
+  - name: OpenVibe
+    alias: OpenVibers
+    website: https://openvibe.network
+repository-code: https://github.com/OpenVibers/OpenVibe.Reviews
+url: https://openvibe.reviews
+license: AGPL-3.0-only
+abstract: "Review signals gathered across sources with provenance, entity resolution and honest aggregates, at openvibe.reviews."
+keywords:
+  - openvibe
+  - community
+  - entity-resolution
+  - provenance
+  - ratings
