@@ -25,10 +25,10 @@ t('the records are one pick block: a chip per list, the first picked, every list
         const start = page.indexOf('<div class="pick" id="pick-records">');
         assert.ok(start > 0, 'the pick block is on the home');
         const block = page.slice(start, page.indexOf('<details class="rv-h-fold"'));
-        assert.match(block, /<nav class="pick-row" aria-label="Public records">/);
-        const chips = [...block.matchAll(/<a class="pick-chip" href="#(?:pp-records-)?([a-z-]+)">()()([^<]+)<\/a>/g)];
+        assert.match(block, /<div class=\"ov-parts ov-parts--front\" data-parts=\"\d+\">/, 'its parts are tabs on a phone');
+        const chips = [...block.matchAll(/<label for="ovp-[a-z0-9]+-(?:pp-records-)?([a-z-]+)">()()([^<]+)(?: <span class="ov-parts-n">[^<]*<\/span>)?<\/label>/g)];
         assert.strictEqual(chips.length, 3, `a chip per list (${chips.length})`);
-        assert.ok(!/type="radio"/.test(block), 'no chip is a radio: nothing is picked, every pane shows');
+        assert.ok(/<input type=\"radio\" class=\"ov-parts-r\"[^>]* checked>/.test(block), 'the first part is open on a phone (Shared pick(): tabs, 11-12)');
         // Every list stays in the page, each in its own pane.
         for (const id of chips.map((m) => m[1])) assert.ok(block.includes(`id="${id}"`), `the pane of ${id} is in the page`);
         assert.ok(block.includes('The Coffee Club') && block.includes('Eldert Lane') && block.includes('TransUnion'), 'every list is in the page');
