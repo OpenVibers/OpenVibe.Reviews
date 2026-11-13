@@ -9,10 +9,10 @@
   "domain": "openvibe.reviews",
   "contracts": "openvibe-contracts v0.419.0",
   "sdk": "openvibe-sdk v0.161.0",
-  "shared": "openvibe-shared v4.231.0",
+  "shared": "openvibe-shared v4.232.0",
   "packages": [
     "openvibe-publishing v1.7.0",
-    "openvibe-shared v4.231.0",
+    "openvibe-shared v4.232.0",
     "openvibe-sdk v0.161.0"
   ],
   "capabilities": [
@@ -45,5 +45,5 @@
     "SDK outbox events and Search index documents",
     "per-actor limits (openvibe-sdk/limits)"
   ],
-  "updated": "2026-11-12"
+  "updated": "2026-11-13"
 }
