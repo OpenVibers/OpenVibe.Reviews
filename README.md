@@ -389,6 +389,6 @@ Part of the [OpenVibe network](https://openvibe.network). Built in the open by [
 <!-- versions:start -->
 - openvibe-contracts: v0.419.0
 - openvibe-sdk: v0.172.0
-- openvibe-shared: v4.269.0
+- openvibe-shared: v4.275.0
 - openvibe-publishing: v1.7.0
 <!-- versions:end -->
