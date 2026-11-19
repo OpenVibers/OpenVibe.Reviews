@@ -8,12 +8,12 @@
   "port": 4830,
   "domain": "openvibe.reviews",
   "contracts": "openvibe-contracts v0.443.0",
-  "sdk": "openvibe-sdk v0.177.0",
+  "sdk": "openvibe-sdk v0.188.0",
   "shared": "openvibe-shared v4.320.0",
   "packages": [
     "openvibe-publishing v1.7.0",
     "openvibe-shared v4.320.0",
-    "openvibe-sdk v0.177.0"
+    "openvibe-sdk v0.188.0"
   ],
   "capabilities": [
     "reviews.entity.resolve",
@@ -45,5 +45,5 @@
     "SDK outbox events and Search index documents",
     "per-actor limits (openvibe-sdk/limits)"
   ],
-  "updated": "2026-11-18"
+  "updated": "2026-11-19"
 }
