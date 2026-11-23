@@ -831,7 +831,7 @@ function createReviewsService({ db, stores, outbox, config, now = () => Date.now
         const t = now();
         const id = `sig_${ulid(t)}`;
         if (prev) {
-            const why = prev.entity_id !== entityId ? 'reattributed by an editor' : `source item revised (r${prev.item_revision} → r${itemRow.item_revision})`;
+            const why = prev.entity_id !== entityId ? 'reattributed by an editor' : `source item revised (r${prev.item_revision} to r${itemRow.item_revision})`;
             await withdrawSignal(prev, why, actor, prev.entity_id !== entityId ? {} : { status: 'superseded', supersededBy: id });
         }
         await q.insertSignal.run({
