@@ -9,6 +9,7 @@
  */
 const ssr = require('openvibe-publishing/ssr');
 const showcase = require('openvibe-shared/showcase');
+const glyphs = require('openvibe-shared/glyphs');
 const kit = require('openvibe-shared/kit');
 // The short home (the owner's rule, 2026-10-30): pick blocks and folds.
 const { pickBlock, foldBlock } = require('./short');
@@ -442,7 +443,7 @@ function everywherePage({ q, kind, near, links, KINDS, KIND_TEXT }) {
 <div class="rv-ew-row"><label for="ew-near">Near (for a local business or landlord)</label><input id="ew-near" name="near" type="text" maxlength="80" placeholder="City and state" value="${near}"></div>
 <p><button type="submit">Search every site</button></p></form>
 ${q ? html`<nav class="rv-ew-kinds" aria-label="What it is">${KINDS.map((k) => (k === kind ? html`<span class="rv-ew-kind on" aria-current="page">${KIND_TEXT[k]}</span>` : html`<a class="rv-ew-kind" href="${tab(k)}">${KIND_TEXT[k]}</a>`))}</nav>
-<ul class="rv-ew-sites">${links.map((l) => html`<li class="rv-ew-site"><a class="rv-ew-open" href="${l.url}" target="_blank" rel="noopener nofollow"><span class="rv-ew-name">${l.name}</span><span class="rv-ew-host">${host(l.url)} ↗</span></a><p class="rv-ew-best">${l.best}</p></li>`)}</ul>
+<ul class="rv-ew-sites">${links.map((l) => html`<li class="rv-ew-site"><a class="rv-ew-open" href="${l.url}" target="_blank" rel="noopener nofollow"><span class="rv-ew-name">${l.name}</span><span class="rv-ew-host">${host(l.url)} ${raw(glyphs.svg('open', { size: 14 }))}</span></a><p class="rv-ew-best">${l.best}</p></li>`)}</ul>
 <p class="rv-muted">Read more than one: each site has its own audience and its own rules about who may review.</p>` : ''}
 </section>`;
 }
